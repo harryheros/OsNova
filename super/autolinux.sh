@@ -382,15 +382,23 @@ runcmd:
   - resize2fs /dev/sda1 || true
 EOF
 
-    # Use debugfs to inject files directly into image filesystem
-    # No mount needed — bypasses all loop/overlapping issues
+    # Find root partition by ext4 fstype — most reliable method
     losetup -D 2>/dev/null || true
     LOOPDEV="$(losetup --find --show -P "${IMG_PATH}")"
-    sleep 1
-    SRC_PART="${LOOPDEV}p1"
-    [ ! -b "$SRC_PART" ] && SRC_PART="${LOOPDEV}"
+    sleep 2
 
-    echo -e "${CYAN}Injecting via debugfs...${NC}"
+    SRC_PART=$(lsblk -lnp -o NAME,SIZE,FSTYPE "$LOOPDEV" 2>/dev/null | grep "ext4" | sort -hk2 | tail -n1 | awk '{print $1}')
+    if [ -z "$SRC_PART" ]; then
+        echo -e "${RED}Error: Cannot find ext4 root partition in cloud image.${NC}"
+        lsblk "$LOOPDEV"
+        losetup -d "${LOOPDEV}" 2>/dev/null || true
+        exit 1
+    fi
+    echo -e "${CYAN}Root partition: ${SRC_PART}${NC}"
+
+    echo -e "${CYAN}Injecting cloud-init via debugfs...${NC}"
+    debugfs -w -R "mkdir /var"                        "$SRC_PART" 2>/dev/null || true
+    debugfs -w -R "mkdir /var/lib"                    "$SRC_PART" 2>/dev/null || true
     debugfs -w -R "mkdir /var/lib/cloud"              "$SRC_PART" 2>/dev/null || true
     debugfs -w -R "mkdir /var/lib/cloud/seed"         "$SRC_PART" 2>/dev/null || true
     debugfs -w -R "mkdir /var/lib/cloud/seed/nocloud" "$SRC_PART" 2>/dev/null || true
@@ -407,6 +415,38 @@ EOF
     sync
     dd if="${IMG_PATH}" of="${REAL_DISK}" bs=4M status=progress conv=fsync
     partprobe "${REAL_DISK}" || true
+
+
+    # Fix GPT backup header — cloud image GPT is sized for the image not the disk.
+    # sgdisk -e relocates the backup header to the actual disk end.
+    echo -e "${CYAN}Fixing GPT backup structures...${NC}"
+    if command -v sgdisk >/dev/null 2>&1; then
+        sgdisk -e "${REAL_DISK}" 2>/dev/null || true
+        partprobe "${REAL_DISK}" || true
+    fi
+    # --- Register EFI boot entry after dd ---
+    if [ -d /sys/firmware/efi ]; then
+        echo -e "${CYAN}Registering Ubuntu EFI boot entry...${NC}"
+        if ! command -v efibootmgr >/dev/null 2>&1; then
+            apt-get install -y efibootmgr 2>/dev/null || true
+        fi
+        case "$REAL_DISK" in
+            *nvme*|*mmcblk*) EFI_PART="${REAL_DISK}p15" ;;
+            *)                EFI_PART="${REAL_DISK}15"  ;;
+        esac
+        if [ -b "${EFI_PART}" ]; then
+            mkdir -p /mnt/autolinux_efi
+            mount "${EFI_PART}" /mnt/autolinux_efi 2>/dev/null || true
+            if [ -f /mnt/autolinux_efi/EFI/ubuntu/shimx64.efi ]; then
+                efibootmgr --create                     --disk "${REAL_DISK}"                     --part 15                     --label "Ubuntu"                     --loader "\EFI\ubuntu\shimx64.efi" 2>/dev/null || true
+                echo -e "${GREEN}EFI boot entry registered!${NC}"
+            else
+                echo -e "${YELLOW}shimx64.efi not found. EFI dir contents:${NC}"
+                ls /mnt/autolinux_efi/EFI/ 2>/dev/null || true
+            fi
+            umount /mnt/autolinux_efi 2>/dev/null || true
+        fi
+    fi
 
     # Cleanup RAM
     umount "${RAM_DIR}" 2>/dev/null || true
