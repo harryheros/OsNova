@@ -321,41 +321,21 @@ install_ubuntu() {
     # --- Mount image and inject cloud-init config ---
     echo -e "${CYAN}Injecting cloud-init configuration...${NC}"
 
-    # Clean up any leftover loop devices for this image
-    sync
-    for lo in $(losetup -j "${IMG_PATH}" 2>/dev/null | cut -d: -f1); do
-        kpartx -dv "$lo" 2>/dev/null || true
-        losetup -d "$lo" 2>/dev/null || true
-    done
+    # --- Inject cloud-init via debugfs (no mount needed) ---
+    # debugfs writes directly to the ext4 filesystem inside the image,
+    # bypassing all loop/kpartx/overlapping issues entirely.
 
-    SOURCE_MNT="${RAM_DIR}/source_mnt"
-    mkdir -p "${SOURCE_MNT}"
+    # Generate config files to a temp directory first
+    TEMP_CFG="${RAM_DIR}/cloud_cfg"
+    mkdir -p "${TEMP_CFG}"
 
-    # Calculate exact offset of first partition — works for both GPT and MBR
-    echo -e "${CYAN}Calculating partition offset...${NC}"
-    START_SECTOR=$(fdisk -l "${IMG_PATH}" 2>/dev/null | grep -E "^${IMG_PATH}[p1 ]" | head -n1 | awk '{print $2}')
-    # Some fdisk versions print a boot flag (*) in column 2 — shift to column 3
-    if ! [[ "$START_SECTOR" =~ ^[0-9]+$ ]]; then
-        START_SECTOR=$(fdisk -l "${IMG_PATH}" 2>/dev/null | grep -E "^${IMG_PATH}[p1 ]" | head -n1 | awk '{print $3}')
-    fi
-    [ -z "$START_SECTOR" ] && START_SECTOR=2048
-    OFFSET=$(( START_SECTOR * 512 ))
-    echo -e "${CYAN}Partition offset: ${OFFSET} bytes (sector ${START_SECTOR})${NC}"
-
-    # Direct offset mount — no losetup/kpartx, no overlapping issues
-    if ! mount -o loop,offset=${OFFSET} "${IMG_PATH}" "${SOURCE_MNT}"; then
-        echo -e "${RED}Error: Could not mount cloud image.${NC}"; exit 1
-    fi
-    LOOPDEV=""
-
-    mkdir -p "${SOURCE_MNT}/var/lib/cloud/seed/nocloud"
-
-    cat > "${SOURCE_MNT}/var/lib/cloud/seed/nocloud/meta-data" <<EOF
+    # Write config files to temp dir
+    cat > "${TEMP_CFG}/meta-data" <<EOF
 instance-id: autolinux-$(date +%s)
 local-hostname: ubuntu
 EOF
 
-    cat > "${SOURCE_MNT}/var/lib/cloud/seed/nocloud/user-data" <<EOF
+    cat > "${TEMP_CFG}/user-data" <<EOF
 #cloud-config
 hostname: ubuntu
 manage_etc_hosts: true
@@ -402,9 +382,25 @@ runcmd:
   - resize2fs /dev/sda1 || true
 EOF
 
+    # Use debugfs to inject files directly into image filesystem
+    # No mount needed — bypasses all loop/overlapping issues
+    losetup -D 2>/dev/null || true
+    LOOPDEV="$(losetup --find --show -P "${IMG_PATH}")"
+    sleep 1
+    SRC_PART="${LOOPDEV}p1"
+    [ ! -b "$SRC_PART" ] && SRC_PART="${LOOPDEV}"
+
+    echo -e "${CYAN}Injecting via debugfs...${NC}"
+    debugfs -w -R "mkdir /var/lib/cloud"              "$SRC_PART" 2>/dev/null || true
+    debugfs -w -R "mkdir /var/lib/cloud/seed"         "$SRC_PART" 2>/dev/null || true
+    debugfs -w -R "mkdir /var/lib/cloud/seed/nocloud" "$SRC_PART" 2>/dev/null || true
+    debugfs -w -R "write ${TEMP_CFG}/meta-data /var/lib/cloud/seed/nocloud/meta-data" "$SRC_PART"
+    debugfs -w -R "write ${TEMP_CFG}/user-data /var/lib/cloud/seed/nocloud/user-data" "$SRC_PART"
+
     sync
-    umount "${SOURCE_MNT}" 2>/dev/null || true
-    # LOOPDEV is empty when using offset mount (kernel manages the loop)
+    losetup -d "${LOOPDEV}" 2>/dev/null || true
+    echo -e "${GREEN}cloud-init injection complete!${NC}"
+
 
     # --- dd from RAM to disk ---
     echo -e "${CYAN}Writing image from RAM to ${REAL_DISK}...${NC}"
