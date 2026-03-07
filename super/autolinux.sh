@@ -408,8 +408,17 @@ EOF
     fi
     sgdisk -e "${REAL_DISK}" || true
     sgdisk -t 15:ef00 "${REAL_DISK}" || true
-    partprobe "${REAL_DISK}" || true
-    sleep 2
+
+    # Force kernel to re-read new partition table
+    # partx -u updates existing entries, -a adds new ones
+    partx -u "${REAL_DISK}" 2>/dev/null || true
+    partx -a "${REAL_DISK}" 2>/dev/null || true
+    blockdev --rereadpt "${REAL_DISK}" 2>/dev/null || true
+    partprobe "${REAL_DISK}" 2>/dev/null || true
+    sleep 3
+
+    echo -e "${CYAN}Partitions after refresh:${NC}"
+    lsblk "${REAL_DISK}"
 
     # --- Fix EFI default boot path (no chroot needed) ---
     # UEFI firmware always tries /EFI/BOOT/BOOTX64.EFI as fallback — guaranteed to work
