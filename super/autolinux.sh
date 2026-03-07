@@ -382,18 +382,31 @@ runcmd:
   - resize2fs /dev/sda1 || true
 EOF
 
-    # Find root partition by ext4 fstype — most reliable method
-    losetup -D 2>/dev/null || true
+    # Find root partition using fdisk + kpartx
+    # losetup -D must NOT be called here — tmpfs is still mounted
     LOOPDEV="$(losetup --find --show -P "${IMG_PATH}")"
     sleep 2
 
-    SRC_PART=$(lsblk -lnp -o NAME,SIZE,FSTYPE "$LOOPDEV" 2>/dev/null | grep "ext4" | sort -hk2 | tail -n1 | awk '{print $1}')
+    # Force kernel to re-read partition table
+    kpartx -av "${LOOPDEV}" 2>/dev/null || true
+    partprobe "${LOOPDEV}" 2>/dev/null || true
+    sleep 2
+
+    # Find ext4 partition
+    SRC_PART=$(lsblk -lnp -o NAME,FSTYPE "$LOOPDEV" 2>/dev/null | grep "ext4" | awk '{print $1}' | head -1)
+
+    # Fallback: use kpartx mapper device
     if [ -z "$SRC_PART" ]; then
-        echo -e "${RED}Error: Cannot find ext4 root partition in cloud image.${NC}"
-        lsblk "$LOOPDEV"
-        losetup -d "${LOOPDEV}" 2>/dev/null || true
-        exit 1
+        MAP_NAME="$(basename "${LOOPDEV}")"
+        [ -b "/dev/mapper/${MAP_NAME}p1" ] && SRC_PART="/dev/mapper/${MAP_NAME}p1"
     fi
+
+    # Last fallback: use fdisk to find partition and debugfs directly on image
+    if [ -z "$SRC_PART" ]; then
+        echo -e "${YELLOW}Using direct image access via debugfs...${NC}"
+        SRC_PART="${IMG_PATH}"
+    fi
+
     echo -e "${CYAN}Root partition: ${SRC_PART}${NC}"
 
     echo -e "${CYAN}Injecting cloud-init via debugfs...${NC}"
