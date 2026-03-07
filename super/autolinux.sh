@@ -299,25 +299,27 @@ EOF
 
 # ==============================================================================
 # UBUNTU INSTALLATION PATH
-# Cloud image + cloud-init injection → dd → reboot
-# No partition table manipulation needed on live disk
+# Download to RAM → inject cloud-init → dd to disk → reboot
 # ==============================================================================
 install_ubuntu() {
-    echo -e "\n${BOLD}${CYAN}Step: Installing Ubuntu from official cloud image...${NC}"
+    echo -e "\n${BOLD}${CYAN}Step: Installing Ubuntu via RAM-Injected Cloud Image...${NC}"
 
     case "$RELEASE" in
         22) IMG_URL="https://cloud-images.ubuntu.com/releases/jammy/release/ubuntu-22.04-server-cloudimg-amd64.img" ;;
         *)  IMG_URL="https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img" ;;
     esac
 
-    IMG_NAME="$(basename "$IMG_URL")"
-    IMG_PATH="${WORKDIR}/${IMG_NAME}"
+    # --- Download image to RAM (avoid dd overwriting itself) ---
+    RAM_DIR="/tmp/autolinux_ram"
+    mkdir -p "$RAM_DIR"
+    mount -t tmpfs -o size=1500M tmpfs "$RAM_DIR"
+    IMG_PATH="${RAM_DIR}/ubuntu-cloud.img"
 
-    echo -e "${CYAN}Downloading Ubuntu cloud image (~600MB)...${NC}"
+    echo -e "${CYAN}Downloading Ubuntu cloud image to RAM (~600MB)...${NC}"
     wget --continue -O "${IMG_PATH}" "${IMG_URL}"
 
-    # --- Mount image and inject cloud-init config BEFORE dd ---
-    echo -e "${CYAN}Injecting cloud-init configuration into image...${NC}"
+    # --- Mount image and inject cloud-init config ---
+    echo -e "${CYAN}Injecting cloud-init configuration...${NC}"
     LOOPDEV="$(losetup --find --show -P "${IMG_PATH}")"
     SRC_PART="${LOOPDEV}p1"
     if [ ! -b "${SRC_PART}" ]; then
@@ -325,11 +327,10 @@ install_ubuntu() {
         echo -e "${RED}Error: Could not find root partition in cloud image.${NC}"; exit 1
     fi
 
-    SOURCE_MNT="${WORKDIR}/source_img"
+    SOURCE_MNT="${RAM_DIR}/source_mnt"
     mkdir -p "${SOURCE_MNT}"
     mount "${SRC_PART}" "${SOURCE_MNT}"
 
-    # Write cloud-init user-data (nocloud datasource)
     mkdir -p "${SOURCE_MNT}/var/lib/cloud/seed/nocloud"
 
     cat > "${SOURCE_MNT}/var/lib/cloud/seed/nocloud/meta-data" <<EOF
@@ -337,13 +338,10 @@ instance-id: autolinux-$(date +%s)
 local-hostname: ubuntu
 EOF
 
-    HASHED_PASS="$(openssl passwd -6 "${ROOT_PASS}")"
     cat > "${SOURCE_MNT}/var/lib/cloud/seed/nocloud/user-data" <<EOF
 #cloud-config
 hostname: ubuntu
 manage_etc_hosts: true
-
-# Root login
 disable_root: false
 ssh_pwauth: true
 chpasswd:
@@ -351,7 +349,6 @@ chpasswd:
     root:${ROOT_PASS}
   expire: false
 
-# Network (written to netplan)
 write_files:
   - path: /etc/netplan/99-autolinux.yaml
     permissions: '0600'
@@ -391,9 +388,14 @@ EOF
     umount "${SOURCE_MNT}" || true
     losetup -d "${LOOPDEV}" || true
 
-    # --- dd image to disk ---
-    echo -e "${CYAN}Writing cloud image to ${REAL_DISK} via dd...${NC}"
+    # --- dd from RAM to disk ---
+    echo -e "${CYAN}Writing image from RAM to ${REAL_DISK}...${NC}"
+    sync
     dd if="${IMG_PATH}" of="${REAL_DISK}" bs=4M status=progress conv=fsync
+    partprobe "${REAL_DISK}" || true
+
+    # Cleanup RAM
+    umount "${RAM_DIR}" 2>/dev/null || true
 
     UBUNTU_CLOUD=1
     GRUB_TITLE=""
