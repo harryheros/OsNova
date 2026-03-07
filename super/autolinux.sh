@@ -458,27 +458,11 @@ fi
 # ==============================================================================
 echo -e "\n${BOLD}${CYAN}Step: Patching GRUB bootloader...${NC}"
 
-# --- Detect UEFI or BIOS ---
-if [ -d /sys/firmware/efi ]; then
-    IS_UEFI=1
-    echo -e "${CYAN}Boot mode detected: UEFI${NC}"
-else
-    IS_UEFI=0
-    echo -e "${CYAN}Boot mode detected: BIOS (Legacy)${NC}"
-fi
-
 BOOT_UUID=$(/usr/sbin/grub-probe --target=fs_uuid /boot 2>/dev/null || grub-probe --target=fs_uuid /boot)
 
-# UEFI: use linuxefi/initrdefi to bypass Secure Boot shim signature issue
-# BIOS: use linux/initrd as normal
-if [ "$IS_UEFI" -eq 1 ]; then
-    LINUX_CMD="linuxefi"
-    INITRD_CMD="initrdefi"
-else
-    LINUX_CMD="linux"
-    INITRD_CMD="initrd"
-fi
-
+# Generate a single menuentry that works on both UEFI and BIOS:
+# - Uses if/elif inside GRUB script to try linuxefi first (UEFI)
+# - Falls back to linux if linuxefi is not available (BIOS)
 cat > /etc/grub.d/40_custom <<EOF
 #!/bin/sh
 exec tail -n +3 \$0
@@ -491,11 +475,20 @@ menuentry '${GRUB_TITLE}' {
     insmod ext2
     search --no-floppy --fs-uuid --set=root ${BOOT_UUID}
     if [ -f ${KERNEL_PATH} ]; then
-        ${LINUX_CMD} ${KERNEL_PATH} ${KERNEL_APPEND}
-        ${INITRD_CMD} ${INITRD_PATH}
+        set kpath=${KERNEL_PATH}
+        set ipath=${INITRD_PATH}
     else
-        ${LINUX_CMD} ${KERNEL_PATH##/boot} ${KERNEL_APPEND}
-        ${INITRD_CMD} ${INITRD_PATH##/boot}
+        set kpath=${KERNEL_PATH##/boot}
+        set ipath=${INITRD_PATH##/boot}
+    fi
+    if loadfont unicode ; then
+        set gfxmode=auto
+    fi
+    if linuxefi \$kpath ${KERNEL_APPEND} 2>/dev/null ; then
+        initrdefi \$ipath
+    else
+        linux \$kpath ${KERNEL_APPEND}
+        initrd \$ipath
     fi
 }
 EOF
