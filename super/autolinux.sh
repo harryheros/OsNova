@@ -299,7 +299,8 @@ EOF
 
 # ==============================================================================
 # UBUNTU INSTALLATION PATH
-# Cloud image + chroot config — no live ISO, no casper, no sr0 issues
+# Cloud image + cloud-init injection → dd → reboot
+# No partition table manipulation needed on live disk
 # ==============================================================================
 install_ubuntu() {
     echo -e "\n${BOLD}${CYAN}Step: Installing Ubuntu from official cloud image...${NC}"
@@ -315,149 +316,88 @@ install_ubuntu() {
     echo -e "${CYAN}Downloading Ubuntu cloud image (~600MB)...${NC}"
     wget --continue -O "${IMG_PATH}" "${IMG_URL}"
 
-    # Partition prefix: nvme/mmcblk → p1, sda/vda → 1
-    case "$REAL_DISK" in
-        *nvme*|*mmcblk*|*loop*) PART_PFX="p" ;;
-        *) PART_PFX="" ;;
-    esac
+    # --- Mount image and inject cloud-init config BEFORE dd ---
+    echo -e "${CYAN}Injecting cloud-init configuration into image...${NC}"
+    LOOPDEV="$(losetup --find --show -P "${IMG_PATH}")"
+    SRC_PART="${LOOPDEV}p1"
+    if [ ! -b "${SRC_PART}" ]; then
+        losetup -d "${LOOPDEV}" || true
+        echo -e "${RED}Error: Could not find root partition in cloud image.${NC}"; exit 1
+    fi
 
-    # --- dd cloud image directly to disk ---
-    # Cannot repartition a live disk (device busy).
-    # dd the image directly — it brings its own partition table.
-    # Then grow the root partition to fill remaining disk space.
+    SOURCE_MNT="${WORKDIR}/source_img"
+    mkdir -p "${SOURCE_MNT}"
+    mount "${SRC_PART}" "${SOURCE_MNT}"
+
+    # Write cloud-init user-data (nocloud datasource)
+    mkdir -p "${SOURCE_MNT}/var/lib/cloud/seed/nocloud"
+
+    cat > "${SOURCE_MNT}/var/lib/cloud/seed/nocloud/meta-data" <<EOF
+instance-id: autolinux-$(date +%s)
+local-hostname: ubuntu
+EOF
+
+    HASHED_PASS="$(openssl passwd -6 "${ROOT_PASS}")"
+    cat > "${SOURCE_MNT}/var/lib/cloud/seed/nocloud/user-data" <<EOF
+#cloud-config
+hostname: ubuntu
+manage_etc_hosts: true
+
+# Root login
+disable_root: false
+ssh_pwauth: true
+chpasswd:
+  list: |
+    root:${ROOT_PASS}
+  expire: false
+
+# Network (written to netplan)
+write_files:
+  - path: /etc/netplan/99-autolinux.yaml
+    permissions: '0600'
+    content: |
+      network:
+        version: 2
+        ethernets:
+          ${INTERFACE}:
+            dhcp4: false
+            addresses:
+              - ${V_IP}/${V_PREFIX}
+            routes:
+              - to: default
+                via: ${V_GATEWAY}
+            nameservers:
+              addresses: [8.8.8.8, 1.1.1.1]
+  - path: /etc/ssh/sshd_config.d/99-autolinux.conf
+    content: |
+      PermitRootLogin yes
+      PasswordAuthentication yes
+      Port ${SSH_PORT}
+  - path: /etc/sysctl.d/99-autolinux-bbr.conf
+    content: |
+      net.core.default_qdisc=fq
+      net.ipv4.tcp_congestion_control=bbr
+  - path: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+    content: |
+      network: {config: disabled}
+
+runcmd:
+  - netplan apply || true
+  - systemctl restart ssh || systemctl restart sshd || true
+  - growpart /dev/sda 1 || true
+  - resize2fs /dev/sda1 || true
+EOF
+
+    umount "${SOURCE_MNT}" || true
+    losetup -d "${LOOPDEV}" || true
+
+    # --- dd image to disk ---
     echo -e "${CYAN}Writing cloud image to ${REAL_DISK} via dd...${NC}"
     dd if="${IMG_PATH}" of="${REAL_DISK}" bs=4M status=progress conv=fsync
-    partprobe "${REAL_DISK}" || true
-    sleep 3
 
-    # Ubuntu cloud image partition layout:
-    #   p1  = root (ext4)
-    #   p14 = BIOS boot (no fs)
-    #   p15 = EFI (vfat)
-    ROOT_PART="${REAL_DISK}${PART_PFX}1"
-    ESP_PART="${REAL_DISK}${PART_PFX}15"
-
-    # Install growpart if not present
-    if ! command -v growpart >/dev/null 2>&1; then
-        apt-get install -y cloud-guest-utils 2>/dev/null ||         yum install -y cloud-utils-growpart 2>/dev/null || true
-    fi
-
-    echo -e "${CYAN}Expanding root partition to fill disk...${NC}"
-    growpart "${REAL_DISK}" 1 2>/dev/null || true
-    sleep 1
-    resize2fs "${ROOT_PART}" || true
-
-    TARGET_ROOT="${WORKDIR}/target_root"
-    mkdir -p "${TARGET_ROOT}"
-    mount "${ROOT_PART}" "${TARGET_ROOT}"
-
-    # Mount EFI if present
-    if blkid "${ESP_PART}" >/dev/null 2>&1; then
-        mkdir -p "${TARGET_ROOT}/boot/efi"
-        mount "${ESP_PART}" "${TARGET_ROOT}/boot/efi"
-    else
-        ESP_PART=""
-    fi
-
-    # --- fstab ---
-    ROOT_UUID="$(blkid -s UUID -o value "${ROOT_PART}")"
-    cat > "${TARGET_ROOT}/etc/fstab" <<EOF
-UUID=${ROOT_UUID} / ext4 defaults 0 1
-EOF
-    if [ -n "$ESP_PART" ]; then
-        ESP_UUID="$(blkid -s UUID -o value "${ESP_PART}")"
-        echo "UUID=${ESP_UUID} /boot/efi vfat umask=0077 0 1" >> "${TARGET_ROOT}/etc/fstab"
-    fi
-
-
-    # --- Network (netplan) ---
-    mkdir -p "${TARGET_ROOT}/etc/netplan"
-    cat > "${TARGET_ROOT}/etc/netplan/99-autolinux.yaml" <<EOF
-network:
-  version: 2
-  ethernets:
-    ${INTERFACE}:
-      dhcp4: false
-      addresses:
-        - ${V_IP}/${V_PREFIX}
-      routes:
-        - to: default
-          via: ${V_GATEWAY}
-      nameservers:
-        addresses: [8.8.8.8, 1.1.1.1]
-EOF
-    chmod 600 "${TARGET_ROOT}/etc/netplan/99-autolinux.yaml"
-
-    # Prevent cloud-init from overriding our network config on first boot
-    mkdir -p "${TARGET_ROOT}/etc/cloud/cloud.cfg.d"
-    cat > "${TARGET_ROOT}/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg" <<EOF
-network: {config: disabled}
-EOF
-
-    # --- SSH ---
-    mkdir -p "${TARGET_ROOT}/etc/ssh/sshd_config.d"
-    cat > "${TARGET_ROOT}/etc/ssh/sshd_config.d/99-autolinux.conf" <<EOF
-PermitRootLogin yes
-PasswordAuthentication yes
-Port ${SSH_PORT}
-EOF
-
-    # --- BBR ---
-    cat > "${TARGET_ROOT}/etc/sysctl.d/99-autolinux-bbr.conf" <<EOF
-net.core.default_qdisc=fq
-net.ipv4.tcp_congestion_control=bbr
-EOF
-
-    # --- Hostname ---
-    echo "ubuntu" > "${TARGET_ROOT}/etc/hostname"
-
-    # --- Root password ---
-    echo "root:${ROOT_PASS}" | chroot "${TARGET_ROOT}" chpasswd
-    chroot "${TARGET_ROOT}" passwd -u root || true
-
-    # --- Bind mounts for chroot ---
-    mount --bind /dev     "${TARGET_ROOT}/dev"
-    mount --bind /dev/pts "${TARGET_ROOT}/dev/pts"
-    mount --bind /proc    "${TARGET_ROOT}/proc"
-    mount --bind /sys     "${TARGET_ROOT}/sys"
-    mount --bind /run     "${TARGET_ROOT}/run"
-
-    echo -e "${CYAN}Rebuilding initramfs and installing GRUB in target system...${NC}"
-    chroot "${TARGET_ROOT}" update-initramfs -u
-
-    if [ "$EFI_MODE" -eq 1 ]; then
-        chroot "${TARGET_ROOT}" grub-install \
-            --target=x86_64-efi \
-            --efi-directory=/boot/efi \
-            --bootloader-id=ubuntu \
-            --recheck
-    else
-        chroot "${TARGET_ROOT}" grub-install \
-            --target=i386-pc \
-            "${REAL_DISK}" \
-            --recheck
-    fi
-
-    chroot "${TARGET_ROOT}" update-grub
-    chroot "${TARGET_ROOT}" netplan generate || true
-    chroot "${TARGET_ROOT}" systemctl enable ssh 2>/dev/null || \
-        chroot "${TARGET_ROOT}" systemctl enable sshd 2>/dev/null || true
-
-    # --- Cleanup mounts ---
-    echo -e "${CYAN}Cleaning up mounts...${NC}"
-    for mnt in run sys proc dev/pts dev; do
-        umount -lf "${TARGET_ROOT}/${mnt}" 2>/dev/null || true
-    done
-    [ -n "$ESP_PART" ] && umount -lf "${TARGET_ROOT}/boot/efi" 2>/dev/null || true
-    umount -lf "${TARGET_ROOT}" 2>/dev/null || true
-    umount -lf "${SOURCE_MNT}"  2>/dev/null || true
-    losetup -d "${LOOPDEV}"     2>/dev/null || true
-
-    # Ubuntu installs its own GRUB inside chroot — skip main GRUB step
     UBUNTU_CLOUD=1
     GRUB_TITLE=""
 }
-
 # --- Run the appropriate installer ---
 if [ "$OS_TYPE" = "debian" ]; then
     install_debian
