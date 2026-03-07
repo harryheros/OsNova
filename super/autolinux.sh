@@ -431,7 +431,7 @@ EOF
     # ds=nocloud-net;s=file:/// reads user-data from initrd root
     # builtin_cdrom=0 prevents /dev/sr0 scanning error
     # cloud-config-url=/dev/null prevents network config fetch
-    KERNEL_APPEND="autoinstall ds=nocloud-net;s=file:/// ip=${V_IP}::${V_GATEWAY}:${V_NETMASK}:ubuntu::off:8.8.8.8 builtin_cdrom=0 cloud-config-url=/dev/null quiet ---"
+    KERNEL_APPEND="autoinstall ds=nocloud-net;s=file:/// ip=${V_IP}::${V_GATEWAY}:${V_NETMASK}:ubuntu::off:8.8.8.8 cloud-config-url=/dev/null root=/dev/ram0 console=tty0 ---"
     GRUB_TITLE="AutoLinux-Ubuntu${RELEASE}"
 }
 
