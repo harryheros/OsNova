@@ -450,9 +450,16 @@ BOOT_UUID=$(/usr/sbin/grub-probe --target=fs_uuid /boot 2>/dev/null || grub-prob
 # Generate a single menuentry that works on both UEFI and BIOS:
 # - Uses if/elif inside GRUB script to try linuxefi first (UEFI)
 # - Falls back to linux if linuxefi is not available (BIOS)
-cat > /etc/grub.d/40_custom <<EOF
+# Write 40_custom with two platform-specific menuentry blocks.
+# GRUB's --hint-efi / --hint-bios flags are unreliable across distros,
+# so we use the if/menuentry approach directly in the grub.d script,
+# which is evaluated at grub-mkconfig time on the actual boot platform.
+cat > /etc/grub.d/40_custom <<GRUBEOF
 #!/bin/sh
 exec tail -n +3 \$0
+
+# UEFI entry
+if [ "\${grub_platform}" = "efi" ]; then
 menuentry '${GRUB_TITLE}' {
     load_video
     insmod all_video
@@ -462,24 +469,35 @@ menuentry '${GRUB_TITLE}' {
     insmod ext2
     search --no-floppy --fs-uuid --set=root ${BOOT_UUID}
     if [ -f ${KERNEL_PATH} ]; then
-        set kpath=${KERNEL_PATH}
-        set ipath=${INITRD_PATH}
+        linuxefi ${KERNEL_PATH} ${KERNEL_APPEND}
+        initrdefi ${INITRD_PATH}
     else
-        set kpath=${KERNEL_PATH##/boot}
-        set ipath=${INITRD_PATH##/boot}
-    fi
-    if loadfont unicode ; then
-        set gfxmode=auto
-    fi
-    if [ "\$grub_platform" = "efi" ]; then
-        linuxefi \$kpath ${KERNEL_APPEND}
-        initrdefi \$ipath
-    else
-        linux \$kpath ${KERNEL_APPEND}
-        initrd \$ipath
+        linuxefi ${KERNEL_PATH##/boot} ${KERNEL_APPEND}
+        initrdefi ${INITRD_PATH##/boot}
     fi
 }
-EOF
+fi
+
+# BIOS entry
+if [ "\${grub_platform}" != "efi" ]; then
+menuentry '${GRUB_TITLE}' {
+    load_video
+    insmod all_video
+    insmod gzio
+    insmod part_gpt
+    insmod part_msdos
+    insmod ext2
+    search --no-floppy --fs-uuid --set=root ${BOOT_UUID}
+    if [ -f ${KERNEL_PATH} ]; then
+        linux ${KERNEL_PATH} ${KERNEL_APPEND}
+        initrd ${INITRD_PATH}
+    else
+        linux ${KERNEL_PATH##/boot} ${KERNEL_APPEND}
+        initrd ${INITRD_PATH##/boot}
+    fi
+}
+fi
+GRUBEOF
 chmod +x /etc/grub.d/40_custom
 
 sed -i "s/GRUB_DEFAULT=.*/GRUB_DEFAULT=\"${GRUB_TITLE}\"/" /etc/default/grub
