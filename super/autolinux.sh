@@ -401,53 +401,47 @@ EOF
     dd if="${IMG_PATH}" of="${REAL_DISK}" bs=4M status=progress conv=fsync
     rm -f "${IMG_PATH}"
 
-    # --- Fix GPT backup header ---
+    # --- Fix GPT header ---
     echo -e "${CYAN}Fixing GPT structure...${NC}"
     if ! command -v sgdisk >/dev/null 2>&1; then
-        apt-get install -y gdisk 2>/dev/null || true
+        apt-get install -y gdisk 2>/dev/null || yum install -y gdisk 2>/dev/null || true
     fi
-    sgdisk -e "${REAL_DISK}" 2>/dev/null || true
-    sgdisk -t 15:ef00 "${REAL_DISK}" 2>/dev/null || true
+    sgdisk -e "${REAL_DISK}" || true
+    sgdisk -t 15:ef00 "${REAL_DISK}" || true
     partprobe "${REAL_DISK}" || true
     sleep 2
 
-    # --- chroot grub-install: let Ubuntu write its own EFI entry ---
-    echo -e "${CYAN}Installing GRUB via chroot...${NC}"
+    # --- Fix EFI default boot path (no chroot needed) ---
+    # UEFI firmware always tries /EFI/BOOT/BOOTX64.EFI as fallback — guaranteed to work
+    echo -e "${CYAN}Fixing EFI boot paths...${NC}"
     case "${REAL_DISK}" in
-        *nvme*|*mmcblk*) ROOT_PART="${REAL_DISK}p1"; EFI_PART="${REAL_DISK}p15" ;;
-        *)                ROOT_PART="${REAL_DISK}1";  EFI_PART="${REAL_DISK}15"  ;;
+        *nvme*|*mmcblk*) EFI_PART="${REAL_DISK}p15" ;;
+        *)                EFI_PART="${REAL_DISK}15"  ;;
     esac
 
-    NEWROOT="/mnt/autolinux_newroot"
-    mkdir -p "${NEWROOT}"
-    if mount "${ROOT_PART}" "${NEWROOT}"; then
-        mkdir -p "${NEWROOT}/boot/efi"
-        mount "${EFI_PART}" "${NEWROOT}/boot/efi" 2>/dev/null || true
-        for d in /dev /dev/pts /proc /sys /run; do
-            mount --bind "$d" "${NEWROOT}${d}" 2>/dev/null || true
-        done
-
-        chroot "${NEWROOT}" grub-install \
-            --target=x86_64-efi \
-            --efi-directory=/boot/efi \
-            --bootloader-id=ubuntu \
-            --recheck 2>/dev/null || \
-        chroot "${NEWROOT}" grub-install \
-            --target=x86_64-efi \
-            --efi-directory=/boot/efi \
-            --bootloader-id=ubuntu 2>/dev/null || true
-
-        chroot "${NEWROOT}" update-grub 2>/dev/null || true
-        echo -e "${GREEN}GRUB installed successfully!${NC}"
-
-        # Unmount in reverse order
-        for d in /run /sys /proc /dev/pts /dev; do
-            umount "${NEWROOT}${d}" 2>/dev/null || true
-        done
-        umount "${NEWROOT}/boot/efi" 2>/dev/null || true
-        umount "${NEWROOT}" 2>/dev/null || true
+    EFI_MNT="/mnt/efi_fix"
+    mkdir -p "${EFI_MNT}"
+    if mount "${EFI_PART}" "${EFI_MNT}"; then
+        mkdir -p "${EFI_MNT}/EFI/BOOT"
+        if [ -f "${EFI_MNT}/EFI/ubuntu/shimx64.efi" ]; then
+            cp "${EFI_MNT}/EFI/ubuntu/shimx64.efi" "${EFI_MNT}/EFI/BOOT/BOOTX64.EFI"
+            cp "${EFI_MNT}/EFI/ubuntu/grubx64.efi"  "${EFI_MNT}/EFI/BOOT/grubx64.efi" 2>/dev/null || true
+            echo -e "${GREEN}EFI default path fixed!${NC}"
+        else
+            echo -e "${YELLOW}shimx64.efi not found. EFI contents:${NC}"
+            find "${EFI_MNT}" -type f 2>/dev/null || true
+        fi
+        umount "${EFI_MNT}"
     else
-        echo -e "${YELLOW}Warning: Could not mount ${ROOT_PART} for chroot grub-install.${NC}"
+        echo -e "${RED}Could not mount EFI partition ${EFI_PART}${NC}"
+        lsblk "${REAL_DISK}"
+    fi
+
+    # --- Register NVRAM entry (double insurance) ---
+    if [ -d /sys/firmware/efi ]; then
+        apt-get install -y efibootmgr 2>/dev/null || true
+        efibootmgr -B -L "Ubuntu" 2>/dev/null || true
+        efibootmgr -c -d "${REAL_DISK}" -p 15 -L "Ubuntu"             -l "\EFI\ubuntu\shimx64.efi" 2>/dev/null || true
     fi
 
     GRUB_TITLE=""
@@ -463,13 +457,9 @@ fi
 # ==============================================================================
 # GRUB CONFIGURATION
 # ==============================================================================
-echo -e "\n${BOLD}${CYAN}Step: Patching GRUB bootloader...${NC}"
+if [ "$OS_TYPE" = "debian" ]; then
+    echo -e "\n${BOLD}${CYAN}Step: Patching GRUB bootloader (Debian)...${NC}"
 
-if [ "$OS_TYPE" = "ubuntu" ]; then
-    # Ubuntu: GRUB already installed via chroot grub-install in install_ubuntu()
-    echo -e "${GREEN}Ubuntu GRUB handled by chroot — skipping.${NC}"
-else
-    # Debian: write 40_custom with netboot kernel/initrd
     BOOT_UUID=$(/usr/sbin/grub-probe --target=fs_uuid /boot 2>/dev/null || \
                 grub-probe --target=fs_uuid /boot)
     KERN_BN="$(basename "${KERNEL_PATH}")"
@@ -497,15 +487,17 @@ EOF
     sed -i "s/GRUB_DEFAULT=.*/GRUB_DEFAULT=\"${GRUB_TITLE}\"/" /etc/default/grub
     sed -i '/GRUB_DISABLE_OS_PROBER/d' /etc/default/grub
     echo "GRUB_DISABLE_OS_PROBER=true" >> /etc/default/grub
-fi
 
-echo -e "\n${BOLD}${CYAN}Step: Updating GRUB configuration...${NC}"
-if command -v update-grub >/dev/null 2>&1; then
-    update-grub
+    echo -e "\n${BOLD}${CYAN}Step: Updating GRUB configuration...${NC}"
+    if command -v update-grub >/dev/null 2>&1; then
+        update-grub
+    else
+        GRUB_CFG_PATH=$(find /boot/grub2 /boot/grub /etc -name grub.cfg 2>/dev/null | head -n1)
+        [ -z "$GRUB_CFG_PATH" ] && GRUB_CFG_PATH="/boot/grub2/grub.cfg"
+        grub2-mkconfig -o "$GRUB_CFG_PATH"
+    fi
 else
-    GRUB_CFG_PATH=$(find /boot/grub2 /boot/grub /etc -name grub.cfg 2>/dev/null | head -n1)
-    [ -z "$GRUB_CFG_PATH" ] && GRUB_CFG_PATH="/boot/grub2/grub.cfg"
-    grub2-mkconfig -o "$GRUB_CFG_PATH"
+    echo -e "\n${GREEN}Ubuntu bootloader already handled in chroot — skipping host GRUB update.${NC}"
 fi
 
 # ==============================================================================
