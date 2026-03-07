@@ -366,13 +366,10 @@ runcmd:
   - resize2fs /dev/sda1 || true
 EOF
 
-    if [ -n "$IMG_ROOT" ] && [ -b "$IMG_ROOT" ]; then
-        echo -e "${CYAN}Injecting cloud-init into ${IMG_ROOT}...${NC}"
-
-        cat > "${TEMP_CFG}/network-config" <<EOF
+    cat > "${TEMP_CFG}/network-config" <<EOF
 version: 2
 ethernets:
-  eth0:
+  ${INTERFACE}:
     dhcp4: false
     dhcp6: false
     addresses:
@@ -386,18 +383,20 @@ ethernets:
         - 1.1.1.1
 EOF
 
+    if [ -n "$IMG_ROOT" ] && [ -b "$IMG_ROOT" ]; then
+        echo -e "${CYAN}Injecting cloud-init into ${IMG_ROOT}...${NC}"
         debugfs -w -R "mkdir /var"                        "${IMG_ROOT}" 2>/dev/null || true
         debugfs -w -R "mkdir /var/lib"                    "${IMG_ROOT}" 2>/dev/null || true
         debugfs -w -R "mkdir /var/lib/cloud"              "${IMG_ROOT}" 2>/dev/null || true
         debugfs -w -R "mkdir /var/lib/cloud/seed"         "${IMG_ROOT}" 2>/dev/null || true
         debugfs -w -R "mkdir /var/lib/cloud/seed/nocloud" "${IMG_ROOT}" 2>/dev/null || true
-        debugfs -w -R "write ${TEMP_CFG}/meta-data       /var/lib/cloud/seed/nocloud/meta-data"      "${IMG_ROOT}"
-        debugfs -w -R "write ${TEMP_CFG}/user-data       /var/lib/cloud/seed/nocloud/user-data"      "${IMG_ROOT}"
-        debugfs -w -R "write ${TEMP_CFG}/network-config  /var/lib/cloud/seed/nocloud/network-config" "${IMG_ROOT}"
+        debugfs -w -R "write ${TEMP_CFG}/meta-data /var/lib/cloud/seed/nocloud/meta-data" "${IMG_ROOT}"
+        debugfs -w -R "write ${TEMP_CFG}/user-data /var/lib/cloud/seed/nocloud/user-data" "${IMG_ROOT}"
+        debugfs -w -R "write ${TEMP_CFG}/network-config /var/lib/cloud/seed/nocloud/network-config" "${IMG_ROOT}"
         sync
-        echo -e "${GREEN}cloud-init injection complete! (meta-data / user-data / network-config)${NC}"
+        echo -e "${GREEN}cloud-init injection complete!${NC}"
     else
-        echo -e "${YELLOW}Warning: Could not find root partition, skipping cloud-init injection.${NC}"
+        echo -e "${YELLOW}Warning: Could not find root partition, skipping injection.${NC}"
     fi
 
     # --- Fix EFI fallback path ---
@@ -440,9 +439,6 @@ EOF
     GRUB_TITLE=""
     UBUNTU_CLOUD=1
 }
-
-
-
 
 # --- Run the appropriate installer ---
 if [ "$OS_TYPE" = "debian" ]; then
