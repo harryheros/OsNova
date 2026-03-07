@@ -320,32 +320,47 @@ install_ubuntu() {
 
     # --- Mount image and inject cloud-init config ---
     echo -e "${CYAN}Injecting cloud-init configuration...${NC}"
+
+    # Install kpartx if missing (best tool for mapping image partitions)
+    if ! command -v kpartx >/dev/null 2>&1; then
+        apt-get install -y kpartx 2>/dev/null || yum install -y kpartx 2>/dev/null || true
+    fi
+
     modprobe loop || true
-    LOOPDEV="$(losetup --find --show -P "${IMG_PATH}")"
-    sleep 2
-
-    # Try both p1 and 1 naming conventions
-    SRC_PART=""
-    if   [ -b "${LOOPDEV}p1" ]; then SRC_PART="${LOOPDEV}p1"
-    elif [ -b "${LOOPDEV}1"  ]; then SRC_PART="${LOOPDEV}1"
-    fi
-
-    # Fallback: force partprobe and retry
-    if [ -z "$SRC_PART" ]; then
-        partprobe "${LOOPDEV}" || true
-        sleep 1
-        [ -b "${LOOPDEV}p1" ] && SRC_PART="${LOOPDEV}p1"
-    fi
-
-    if [ -z "$SRC_PART" ]; then
-        echo -e "${YELLOW}Debug: $(ls -l ${LOOPDEV}* 2>/dev/null)${NC}"
-        losetup -d "${LOOPDEV}" || true
-        echo -e "${RED}Error: Could not find root partition in cloud image.${NC}"; exit 1
-    fi
+    losetup -D 2>/dev/null || true
+    LOOPDEV="$(losetup --find --show "${IMG_PATH}")"
 
     SOURCE_MNT="${RAM_DIR}/source_mnt"
     mkdir -p "${SOURCE_MNT}"
-    mount "${SRC_PART}" "${SOURCE_MNT}"
+
+    # Try kpartx first
+    SRC_PART=""
+    if command -v kpartx >/dev/null 2>&1; then
+        kpartx -av "${LOOPDEV}" >/dev/null 2>&1 || true
+        sleep 2
+        MAP_NAME="$(basename "${LOOPDEV}")"
+        [ -b "/dev/mapper/${MAP_NAME}p1" ] && SRC_PART="/dev/mapper/${MAP_NAME}p1"
+    fi
+
+    # Fallback: losetup -P partition scan
+    if [ -z "$SRC_PART" ]; then
+        losetup -d "${LOOPDEV}" 2>/dev/null || true
+        LOOPDEV="$(losetup --find --show -P "${IMG_PATH}")"
+        sleep 2
+        if   [ -b "${LOOPDEV}p1" ]; then SRC_PART="${LOOPDEV}p1"
+        elif [ -b "${LOOPDEV}1"  ]; then SRC_PART="${LOOPDEV}1"
+        fi
+    fi
+
+    # Last resort: manual offset mount
+    if [ -z "$SRC_PART" ]; then
+        echo -e "${YELLOW}Trying manual offset mount...${NC}"
+        OFFSET=$(fdisk -l "${IMG_PATH}" 2>/dev/null | awk '/\.img1/{print $2 * 512}' | head -1)
+        [ -z "$OFFSET" ] && OFFSET=1048576
+        mount -o loop,offset=${OFFSET} "${IMG_PATH}" "${SOURCE_MNT}"
+    else
+        mount "${SRC_PART}" "${SOURCE_MNT}"
+    fi
 
     mkdir -p "${SOURCE_MNT}/var/lib/cloud/seed/nocloud"
 
@@ -402,6 +417,7 @@ runcmd:
 EOF
 
     umount "${SOURCE_MNT}" || true
+    kpartx -dv "${LOOPDEV}" 2>/dev/null || true
     losetup -d "${LOOPDEV}" || true
 
     # --- dd from RAM to disk ---
