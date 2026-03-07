@@ -320,9 +320,25 @@ install_ubuntu() {
 
     # --- Mount image and inject cloud-init config ---
     echo -e "${CYAN}Injecting cloud-init configuration...${NC}"
+    modprobe loop || true
     LOOPDEV="$(losetup --find --show -P "${IMG_PATH}")"
-    SRC_PART="${LOOPDEV}p1"
-    if [ ! -b "${SRC_PART}" ]; then
+    sleep 2
+
+    # Try both p1 and 1 naming conventions
+    SRC_PART=""
+    if   [ -b "${LOOPDEV}p1" ]; then SRC_PART="${LOOPDEV}p1"
+    elif [ -b "${LOOPDEV}1"  ]; then SRC_PART="${LOOPDEV}1"
+    fi
+
+    # Fallback: force partprobe and retry
+    if [ -z "$SRC_PART" ]; then
+        partprobe "${LOOPDEV}" || true
+        sleep 1
+        [ -b "${LOOPDEV}p1" ] && SRC_PART="${LOOPDEV}p1"
+    fi
+
+    if [ -z "$SRC_PART" ]; then
+        echo -e "${YELLOW}Debug: $(ls -l ${LOOPDEV}* 2>/dev/null)${NC}"
         losetup -d "${LOOPDEV}" || true
         echo -e "${RED}Error: Could not find root partition in cloud image.${NC}"; exit 1
     fi
