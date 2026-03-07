@@ -28,7 +28,7 @@ Option 2 — Install Debian
 
 Example: Install Debian 13 with custom password and SSH port.
 
-    bash <(curl -sSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/super/autolinux.sh) -d 13 -p "YourPassword" --port 7777
+    bash <(curl -sSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/super/autolinux.sh) -d 13 -p "YourPassword" -port 7777
 
 ---
 
