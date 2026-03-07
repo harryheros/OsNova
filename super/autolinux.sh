@@ -129,20 +129,20 @@ fi
 if command -v apt-get >/dev/null 2>&1; then
     apt-get update -y
     apt-get install -y util-linux wget ca-certificates kexec-tools tar gzip cpio \
-        grub2-common parted gdisk rsync dosfstools e2fsprogs
+        grub2-common cloud-guest-utils e2fsprogs
 elif command -v dnf >/dev/null 2>&1; then
     dnf install -y util-linux wget ca-certificates kexec-tools tar gzip cpio \
-        grub2 grub2-tools parted gdisk rsync dosfstools e2fsprogs
+        grub2 grub2-tools cloud-utils-growpart e2fsprogs
     [ ! -f /usr/sbin/grub-probe ] && [ -f /usr/sbin/grub2-probe ] && \
         ln -sf /usr/sbin/grub2-probe /usr/sbin/grub-probe
 elif command -v yum >/dev/null 2>&1; then
     if [ "$IS_CENTOS7" -eq 1 ]; then
         yum --disablerepo="*" --enablerepo="autolinux-vault-*" install -y \
             util-linux wget ca-certificates kexec-tools tar gzip cpio \
-            grub2 grub2-tools parted gdisk rsync dosfstools e2fsprogs
+            grub2 grub2-tools cloud-utils-growpart e2fsprogs
     else
         yum install -y util-linux wget ca-certificates kexec-tools tar gzip cpio \
-            grub2 grub2-tools parted gdisk rsync dosfstools e2fsprogs
+            grub2 grub2-tools cloud-utils-growpart e2fsprogs
     fi
     [ ! -f /usr/sbin/grub-probe ] && [ -f /usr/sbin/grub2-probe ] && \
         ln -sf /usr/sbin/grub2-probe /usr/sbin/grub-probe
@@ -315,70 +315,49 @@ install_ubuntu() {
     echo -e "${CYAN}Downloading Ubuntu cloud image (~600MB)...${NC}"
     wget --continue -O "${IMG_PATH}" "${IMG_URL}"
 
-    # --- BIOS vs UEFI detection ---
-    EFI_MODE=0
-    [ -d /sys/firmware/efi ] && EFI_MODE=1
-
     # Partition prefix: nvme/mmcblk → p1, sda/vda → 1
     case "$REAL_DISK" in
         *nvme*|*mmcblk*|*loop*) PART_PFX="p" ;;
         *) PART_PFX="" ;;
     esac
 
-    echo -e "${CYAN}Wiping ${REAL_DISK} and creating fresh GPT layout...${NC}"
-    wipefs -a "${REAL_DISK}" || true
-    sgdisk --zap-all "${REAL_DISK}" || true
-    partprobe "${REAL_DISK}" || true
-    sleep 2
-
-    if [ "$EFI_MODE" -eq 1 ]; then
-        # EFI: ESP(512M) + ROOT(rest)
-        parted -s "${REAL_DISK}" mklabel gpt
-        parted -s "${REAL_DISK}" mkpart ESP fat32 1MiB 513MiB
-        parted -s "${REAL_DISK}" set 1 esp on
-        parted -s "${REAL_DISK}" mkpart ROOT ext4 513MiB 100%
-        ESP_PART="${REAL_DISK}${PART_PFX}1"
-        ROOT_PART="${REAL_DISK}${PART_PFX}2"
-    else
-        # BIOS: BIOS boot(2M) + ROOT(rest)
-        parted -s "${REAL_DISK}" mklabel gpt
-        parted -s "${REAL_DISK}" mkpart BIOSBOOT 1MiB 3MiB
-        parted -s "${REAL_DISK}" set 1 bios_grub on
-        parted -s "${REAL_DISK}" mkpart ROOT ext4 3MiB 100%
-        ESP_PART=""
-        ROOT_PART="${REAL_DISK}${PART_PFX}2"
-    fi
-
+    # --- dd cloud image directly to disk ---
+    # Cannot repartition a live disk (device busy).
+    # dd the image directly — it brings its own partition table.
+    # Then grow the root partition to fill remaining disk space.
+    echo -e "${CYAN}Writing cloud image to ${REAL_DISK} via dd...${NC}"
+    dd if="${IMG_PATH}" of="${REAL_DISK}" bs=4M status=progress conv=fsync
     partprobe "${REAL_DISK}" || true
     sleep 3
 
-    echo -e "${CYAN}Formatting partitions...${NC}"
-    [ -n "$ESP_PART" ] && mkfs.vfat -F32 "${ESP_PART}"
-    mkfs.ext4 -F "${ROOT_PART}"
+    # Ubuntu cloud image partition layout:
+    #   p1  = root (ext4)
+    #   p14 = BIOS boot (no fs)
+    #   p15 = EFI (vfat)
+    ROOT_PART="${REAL_DISK}${PART_PFX}1"
+    ESP_PART="${REAL_DISK}${PART_PFX}15"
 
-    # --- Mount cloud image and copy filesystem ---
-    LOOPDEV="$(losetup --find --show -P "${IMG_PATH}")"
-    SRC_PART="${LOOPDEV}p1"
-    if [ ! -b "${SRC_PART}" ]; then
-        losetup -d "${LOOPDEV}" || true
-        echo -e "${RED}Error: Could not find source partition in cloud image.${NC}"; exit 1
+    # Install growpart if not present
+    if ! command -v growpart >/dev/null 2>&1; then
+        apt-get install -y cloud-guest-utils 2>/dev/null ||         yum install -y cloud-utils-growpart 2>/dev/null || true
     fi
+
+    echo -e "${CYAN}Expanding root partition to fill disk...${NC}"
+    growpart "${REAL_DISK}" 1 2>/dev/null || true
+    sleep 1
+    resize2fs "${ROOT_PART}" || true
 
     TARGET_ROOT="${WORKDIR}/target_root"
-    SOURCE_MNT="${WORKDIR}/source_img"
-    mkdir -p "${TARGET_ROOT}" "${SOURCE_MNT}"
-
-    mount "${SRC_PART}" "${SOURCE_MNT}"
+    mkdir -p "${TARGET_ROOT}"
     mount "${ROOT_PART}" "${TARGET_ROOT}"
-    if [ -n "$ESP_PART" ]; then
+
+    # Mount EFI if present
+    if blkid "${ESP_PART}" >/dev/null 2>&1; then
         mkdir -p "${TARGET_ROOT}/boot/efi"
         mount "${ESP_PART}" "${TARGET_ROOT}/boot/efi"
+    else
+        ESP_PART=""
     fi
-
-    echo -e "${CYAN}Copying cloud image filesystem to ${REAL_DISK} (this may take a few minutes)...${NC}"
-    rsync -aHAX --numeric-ids \
-        --exclude='/boot/efi/*' \
-        "${SOURCE_MNT}/" "${TARGET_ROOT}/"
 
     # --- fstab ---
     ROOT_UUID="$(blkid -s UUID -o value "${ROOT_PART}")"
@@ -389,6 +368,7 @@ EOF
         ESP_UUID="$(blkid -s UUID -o value "${ESP_PART}")"
         echo "UUID=${ESP_UUID} /boot/efi vfat umask=0077 0 1" >> "${TARGET_ROOT}/etc/fstab"
     fi
+
 
     # --- Network (netplan) ---
     mkdir -p "${TARGET_ROOT}/etc/netplan"
