@@ -216,7 +216,6 @@ rm -rf "$WORKDIR" && mkdir -p "$WORKDIR"
 
 # ==============================================================================
 # DEBIAN INSTALLATION PATH
-# Netboot preseed — identical to surpasser.sh 1.3.8
 # ==============================================================================
 install_debian() {
     echo -e "\n${BOLD}${CYAN}Step: Fetching Debian network installer...${NC}"
@@ -299,7 +298,7 @@ EOF
 
 # ==============================================================================
 # UBUNTU INSTALLATION PATH
-# NBD mount → chroot config → mount EFI → disconnect → convert → reboot
+# NBD mount → chroot config → EFI fix → disconnect → convert → reboot
 # ==============================================================================
 install_ubuntu() {
     echo -e "\n${BOLD}${CYAN}Step: Installing Ubuntu via QCOW2 Cloud Image...${NC}"
@@ -312,7 +311,6 @@ install_ubuntu() {
     echo -e "${CYAN}Downloading Ubuntu cloud image (~600MB)...${NC}"
     wget --continue --show-progress -O "${IMG_PATH}" "${IMG_URL}"
 
-    # --- Mount QCOW2 via qemu-nbd ---
     echo -e "${CYAN}Mounting QCOW2 image via NBD...${NC}"
     modprobe nbd max_part=16
     sleep 1
@@ -324,19 +322,19 @@ install_ubuntu() {
     IMG_EFI=$(lsblk -lnp -o NAME,FSTYPE /dev/nbd0 2>/dev/null | grep "vfat" | head -n1 | awk '{print $1}')
     echo -e "${CYAN}Root: ${IMG_ROOT} | EFI: ${IMG_EFI}${NC}"
 
-    # --- Mount root and configure directly (BEFORE convert) ---
     ROOT_MNT="/tmp/img_root_mnt"
     mkdir -p "${ROOT_MNT}"
     mount -t ext4 "${IMG_ROOT}" "${ROOT_MNT}"
 
-    # 1. Root password via chroot
+    # 1. Root password
     echo "root:${ROOT_PASS}" | chroot "${ROOT_MNT}" chpasswd
 
-    # 2. SSH config — patch main sshd_config directly inside mounted image
+    # 2. SSH — patch main config + write .d override
     sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' "${ROOT_MNT}/etc/ssh/sshd_config"
     sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' "${ROOT_MNT}/etc/ssh/sshd_config"
     sed -i "s/^#\?Port .*/Port ${SSH_PORT}/" "${ROOT_MNT}/etc/ssh/sshd_config"
     mkdir -p "${ROOT_MNT}/etc/ssh/sshd_config.d"
+    rm -f "${ROOT_MNT}/etc/ssh/sshd_config.d/"*
     cat > "${ROOT_MNT}/etc/ssh/sshd_config.d/99-autolinux.conf" <<EOF
 PermitRootLogin yes
 PasswordAuthentication yes
@@ -373,11 +371,11 @@ network:
 EOF
     chmod 600 "${ROOT_MNT}/etc/netplan/99-static-ip.yaml"
 
-    # 5. Disable cloud-init network generation permanently
+    # 5. Disable cloud-init network generation
     mkdir -p "${ROOT_MNT}/etc/cloud/cloud.cfg.d"
     echo "network: {config: disabled}" > "${ROOT_MNT}/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg"
 
-    # 6. growpart/resize2fs via cloud-init runcmd
+    # 6. Cloud-init seed — only growpart/resize, no password/SSH (already done above)
     mkdir -p "${ROOT_MNT}/var/lib/cloud/seed/nocloud"
     cat > "${ROOT_MNT}/var/lib/cloud/seed/nocloud/meta-data" <<EOF
 instance-id: i-$(date +%s)
@@ -396,7 +394,7 @@ EOF
 
     # --- Fix EFI fallback path ---
     if [ -n "$IMG_EFI" ] && [ -b "$IMG_EFI" ]; then
-        echo -e "${CYAN}Fixing EFI fallback path in image...${NC}"
+        echo -e "${CYAN}Fixing EFI fallback path...${NC}"
         EFI_MNT="/tmp/efi_fix_mnt"
         mkdir -p "${EFI_MNT}"
         if mount -t vfat "${IMG_EFI}" "${EFI_MNT}" 2>/dev/null; then
@@ -411,7 +409,6 @@ EOF
         fi
     fi
 
-    # --- Disconnect NBD then convert ---
     qemu-nbd --disconnect /dev/nbd0
     sleep 1
 
@@ -423,13 +420,12 @@ EOF
     partx -u "${REAL_DISK}" 2>/dev/null || true
     partprobe "${REAL_DISK}" 2>/dev/null || true
 
-    echo -e "${GREEN}Ubuntu written to disk — ready to reboot!${NC}"
+    echo -e "${GREEN}Ubuntu written to disk!${NC}"
     GRUB_TITLE=""
     UBUNTU_CLOUD=1
 }
 
-
-# --- Run the appropriate installer ---
+# --- Run installer ---
 if [ "$OS_TYPE" = "debian" ]; then
     install_debian
 else
@@ -437,7 +433,7 @@ else
 fi
 
 # ==============================================================================
-# GRUB CONFIGURATION
+# GRUB CONFIGURATION (Debian only)
 # ==============================================================================
 if [ "$OS_TYPE" = "debian" ]; then
     echo -e "\n${BOLD}${CYAN}Step: Patching GRUB bootloader (Debian)...${NC}"
@@ -467,53 +463,36 @@ menuentry '${GRUB_TITLE}' {
 EOF
     chmod +x /etc/grub.d/40_custom
     sed -i "s/GRUB_DEFAULT=.*/GRUB_DEFAULT=\"${GRUB_TITLE}\"/" /etc/default/grub
-    sed -i '/GRUB_DISABLE_OS_PROBER/d' /etc/default/grub
     echo "GRUB_DISABLE_OS_PROBER=true" >> /etc/default/grub
-
-    echo -e "\n${BOLD}${CYAN}Step: Updating GRUB configuration...${NC}"
-    if command -v update-grub >/dev/null 2>&1; then
-        update-grub
-    else
-        GRUB_CFG_PATH=$(find /boot/grub2 /boot/grub /etc -name grub.cfg 2>/dev/null | head -n1)
-        [ -z "$GRUB_CFG_PATH" ] && GRUB_CFG_PATH="/boot/grub2/grub.cfg"
-        grub2-mkconfig -o "$GRUB_CFG_PATH"
-    fi
-else
-    echo -e "\n${GREEN}Ubuntu bootloader already handled in chroot — skipping host GRUB update.${NC}"
+    update-grub || grub2-mkconfig -o /boot/grub/grub.cfg
 fi
 
 # ==============================================================================
-# SUMMARY & REBOOT
+# SUMMARY
 # ==============================================================================
 echo -e "\n${CYAN}◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌${NC}"
-echo -e "${GREEN}[✔] Ready! (v${VERSION})${NC}  Target: ${CYAN}${DISPLAY_NAME}${NC}"
-echo -e "    Disk     : ${YELLOW}${REAL_DISK}${NC}"
-echo -e "    IP       : ${YELLOW}${V_IP}${NC}"
-echo -e "    SSH Port : ${YELLOW}${SSH_PORT}${NC}"
-echo -e "    Password : ${YELLOW}${ROOT_PASS}${NC}"
-
-echo -e "${RED}${BOLD}ATTENTION: Installation takes 5-30 minutes depending on network speed.${NC}"
-echo -e "${RED}${BOLD}The system will reboot automatically when finished.${NC}"
-
+echo -e "${GREEN}${BOLD}                 AutoLinux Installation Summary${NC}"
+echo -e "${CYAN}◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌${NC}"
+echo -e "  OS       : ${YELLOW}${DISPLAY_NAME}${NC}"
+echo -e "  Disk     : ${YELLOW}${REAL_DISK}${NC}"
+echo -e "  IP       : ${YELLOW}${V_IP}/${V_PREFIX}${NC}"
+echo -e "  Gateway  : ${YELLOW}${V_GATEWAY}${NC}"
+echo -e "  SSH Port : ${YELLOW}${SSH_PORT}${NC}"
 if [ "$DEFAULT_PASSWORD_USED" -eq 1 ]; then
-    echo -e "\n${YELLOW}Default root password is set. Please change it after first login.${NC}"
+    echo -e "  Password : ${RED}Harry888 (default — please change after login!)${NC}"
+else
+    echo -e "  Password : ${GREEN}(custom password set)${NC}"
 fi
-
 echo -e "${CYAN}◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌${NC}"
 
 echo -ne "\nRebooting in "
 for i in {10..1}; do echo -n "$i... "; sleep 1; done
 echo -e "\n${RED}${BOLD}Rebooting now!${NC}"
 sync && sleep 2
-# Gracefully close SSH connections before killing the system
-# This lets the SSH client disconnect cleanly instead of timing out
 pkill -TERM sshd 2>/dev/null || true
 sleep 1
-# Enable SysRq
 echo 1 > /proc/sys/kernel/sysrq 2>/dev/null || true
-# Trigger reboot via correct path
 echo b > /proc/sysrq-trigger 2>/dev/null || true
-# Fallbacks
 reboot -f -n 2>/dev/null || true
 systemctl reboot --force --force 2>/dev/null || true
 python3 -c "import ctypes; ctypes.CDLL('libc.so.6').reboot(0x1234567)" 2>/dev/null || true
