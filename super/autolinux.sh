@@ -302,7 +302,7 @@ EOF
 # Download to RAM → inject cloud-init → dd to disk → reboot
 # ==============================================================================
 install_ubuntu() {
-    echo -e "\n${BOLD}${CYAN}Step: Installing Ubuntu via Cloud Image...${NC}"
+    echo -e "\n${BOLD}${CYAN}Step: Installing Ubuntu via Cloud Image (Pre-fix Method)...${NC}"
 
     case "$RELEASE" in
         22) IMG_URL="https://cloud-images.ubuntu.com/releases/jammy/release/ubuntu-22.04-server-cloudimg-amd64.img" ;;
@@ -313,34 +313,54 @@ install_ubuntu() {
     echo -e "${CYAN}Downloading Ubuntu cloud image (~650MB)...${NC}"
     wget --continue --show-progress -O "${IMG_PATH}" "${IMG_URL}"
 
-    # --- Calculate partition offsets from image ---
+    # --- Analyse partition layout ---
     echo -e "${CYAN}Analysing image partition layout...${NC}"
-    fdisk -l "${IMG_PATH}"
+    echo "=== sfdisk ==="
+    sfdisk -l "${IMG_PATH}" 2>/dev/null || fdisk -l "${IMG_PATH}" 2>/dev/null || true
+    echo "=== sgdisk ==="
+    sgdisk -p "${IMG_PATH}" 2>/dev/null || true
 
-    SECTOR_SIZE=$(fdisk -l "${IMG_PATH}" 2>/dev/null | grep "^Units" | awk '{print $(NF-1)}')
-    [ -z "$SECTOR_SIZE" ] && SECTOR_SIZE=512
+    # Use sgdisk to find partitions by type GUID (most reliable for GPT)
+    # EFI = ef00, Linux ext4 = 8300 or 8302
+    SECTOR_SIZE=512
 
-    # Root partition: largest Linux filesystem
-    PART_INFO=$(fdisk -l "${IMG_PATH}" 2>/dev/null | grep "Linux filesystem" | sort -rnk4 | head -n1)
-    ROOT_START=$(echo "$PART_INFO" | awk '{print $2}')
-    if ! [[ "$ROOT_START" =~ ^[0-9]+$ ]]; then
-        ROOT_START=$(echo "$PART_INFO" | awk '{print $3}')
+    # sgdisk -i gives partition info; -p gives table
+    # Extract start sector for EFI (type ef00) and Linux (type 8300)
+    EFI_START=$(sgdisk -p "${IMG_PATH}" 2>/dev/null | grep -i "EFI" | awk '{print $2}' | head -1)
+    ROOT_START=$(sgdisk -p "${IMG_PATH}" 2>/dev/null | grep -i "Linux\|8300\|8302" | sort -k4 -rn | awk '{print $2}' | head -1)
+
+    # Fallback: use sfdisk JSON output
+    if [ -z "$ROOT_START" ] && command -v sfdisk >/dev/null 2>&1; then
+        ROOT_START=$(sfdisk --json "${IMG_PATH}" 2>/dev/null | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+parts=[p for p in d['partitiontable']['partitions'] if p.get('type','')=='0FC63DAF-8483-4772-8E79-3D69D8477DE4']
+parts.sort(key=lambda p:p['size'],reverse=True)
+print(parts[0]['start'] if parts else '')
+" 2>/dev/null || true)
+        EFI_START=$(sfdisk --json "${IMG_PATH}" 2>/dev/null | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+parts=[p for p in d['partitiontable']['partitions'] if p.get('type','')=='C12A7328-F81F-11D2-BA4B-00A0C93EC93B']
+print(parts[0]['start'] if parts else '')
+" 2>/dev/null || true)
     fi
 
-    # EFI partition: EFI System type
-    EFI_INFO=$(fdisk -l "${IMG_PATH}" 2>/dev/null | grep "EFI System" | head -n1)
-    EFI_START=$(echo "$EFI_INFO" | awk '{print $2}')
-    if ! [[ "$EFI_START" =~ ^[0-9]+$ ]]; then
-        EFI_START=$(echo "$EFI_INFO" | awk '{print $3}')
+    echo -e "${CYAN}Root start sector: ${ROOT_START}${NC}"
+    echo -e "${CYAN}EFI  start sector: ${EFI_START}${NC}"
+
+    if [ -z "$ROOT_START" ] || ! [[ "$ROOT_START" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}Error: Could not determine root partition offset. Aborting.${NC}"
+        rm -f "${IMG_PATH}"
+        exit 1
     fi
 
     ROOT_OFFSET=$(( ROOT_START * SECTOR_SIZE ))
     EFI_OFFSET=$(( EFI_START * SECTOR_SIZE ))
+    echo -e "${CYAN}Root offset: ${ROOT_OFFSET} bytes${NC}"
+    echo -e "${CYAN}EFI  offset: ${EFI_OFFSET} bytes${NC}"
 
-    echo -e "${CYAN}Root offset : ${ROOT_OFFSET} bytes (sector ${ROOT_START})${NC}"
-    echo -e "${CYAN}EFI  offset : ${EFI_OFFSET} bytes (sector ${EFI_START})${NC}"
-
-    # --- Generate cloud-init config files ---
+    # --- Generate cloud-init config ---
     TEMP_CFG="/tmp/autolinux_cfg"
     mkdir -p "${TEMP_CFG}"
 
@@ -393,11 +413,10 @@ runcmd:
   - resize2fs /dev/sda1 || true
 EOF
 
-    # --- Step 1: Inject cloud-init into Root partition in image ---
-    echo -e "${CYAN}Injecting cloud-init into root partition...${NC}"
+    # --- Step 1: Inject cloud-init into root partition ---
+    echo -e "${CYAN}Injecting cloud-init into root partition (offset ${ROOT_OFFSET})...${NC}"
     LOOP_ROOT=$(losetup --find --show -o "${ROOT_OFFSET}" "${IMG_PATH}")
-    echo -e "${CYAN}Root loop: ${LOOP_ROOT}${NC}"
-
+    echo -e "${CYAN}Root loop device: ${LOOP_ROOT}${NC}"
     debugfs -w -R "mkdir /var"                        "${LOOP_ROOT}" 2>/dev/null || true
     debugfs -w -R "mkdir /var/lib"                    "${LOOP_ROOT}" 2>/dev/null || true
     debugfs -w -R "mkdir /var/lib/cloud"              "${LOOP_ROOT}" 2>/dev/null || true
@@ -410,43 +429,44 @@ EOF
     echo -e "${GREEN}cloud-init injection complete!${NC}"
 
     # --- Step 2: Fix EFI fallback path in image ---
-    echo -e "${CYAN}Fixing EFI fallback path in image...${NC}"
-    EFI_MNT="/tmp/efi_fix_mnt"
-    mkdir -p "${EFI_MNT}"
-    LOOP_EFI=$(losetup --find --show -o "${EFI_OFFSET}" "${IMG_PATH}")
-    echo -e "${CYAN}EFI loop: ${LOOP_EFI}${NC}"
-
-    if mount -t vfat "${LOOP_EFI}" "${EFI_MNT}" 2>/dev/null; then
-        mkdir -p "${EFI_MNT}/EFI/BOOT"
-        if [ -f "${EFI_MNT}/EFI/ubuntu/shimx64.efi" ]; then
-            cp "${EFI_MNT}/EFI/ubuntu/shimx64.efi" "${EFI_MNT}/EFI/BOOT/BOOTX64.EFI"
-            cp "${EFI_MNT}/EFI/ubuntu/grubx64.efi"  "${EFI_MNT}/EFI/BOOT/grubx64.efi" 2>/dev/null || true
-            echo -e "${GREEN}EFI/BOOT/BOOTX64.EFI written into image!${NC}"
+    if [ -n "$EFI_START" ] && [[ "$EFI_START" =~ ^[0-9]+$ ]] && [ "$EFI_OFFSET" -gt 0 ]; then
+        echo -e "${CYAN}Fixing EFI fallback path in image (offset ${EFI_OFFSET})...${NC}"
+        EFI_MNT="/tmp/efi_fix_mnt"
+        mkdir -p "${EFI_MNT}"
+        LOOP_EFI=$(losetup --find --show -o "${EFI_OFFSET}" "${IMG_PATH}")
+        echo -e "${CYAN}EFI loop device: ${LOOP_EFI}${NC}"
+        if mount -t vfat "${LOOP_EFI}" "${EFI_MNT}" 2>/dev/null; then
+            mkdir -p "${EFI_MNT}/EFI/BOOT"
+            if [ -f "${EFI_MNT}/EFI/ubuntu/shimx64.efi" ]; then
+                cp "${EFI_MNT}/EFI/ubuntu/shimx64.efi" "${EFI_MNT}/EFI/BOOT/BOOTX64.EFI"
+                cp "${EFI_MNT}/EFI/ubuntu/grubx64.efi"  "${EFI_MNT}/EFI/BOOT/grubx64.efi" 2>/dev/null || true
+                echo -e "${GREEN}EFI/BOOT/BOOTX64.EFI written into image!${NC}"
+            else
+                echo -e "${YELLOW}shimx64.efi not found. EFI contents:${NC}"
+                find "${EFI_MNT}" -type f 2>/dev/null || true
+            fi
+            sync
+            umount "${EFI_MNT}"
         else
-            echo -e "${YELLOW}shimx64.efi not found. EFI contents:${NC}"
-            find "${EFI_MNT}" -type f
+            echo -e "${YELLOW}Warning: Could not mount EFI partition from image.${NC}"
         fi
-        sync
-        umount "${EFI_MNT}"
-    else
-        echo -e "${YELLOW}Warning: Could not mount EFI partition from image.${NC}"
+        losetup -d "${LOOP_EFI}" 2>/dev/null || true
     fi
-    losetup -d "${LOOP_EFI}" 2>/dev/null || true
 
     # --- Step 3: dd pre-fixed image to disk ---
     echo -e "${CYAN}Writing pre-fixed image to ${REAL_DISK}...${NC}"
     dd if="${IMG_PATH}" of="${REAL_DISK}" bs=4M status=progress conv=fsync
     rm -f "${IMG_PATH}"
 
-    # Fix GPT backup header (image GPT sized for 659MB, disk may be larger)
+    # Fix GPT backup header to match actual disk size
     sgdisk -e "${REAL_DISK}" 2>/dev/null || true
     partprobe "${REAL_DISK}" 2>/dev/null || true
 
-    echo -e "${GREEN}Ubuntu image written and pre-fixed. Ready to reboot!${NC}"
-
+    echo -e "${GREEN}Ubuntu ready — rebooting into Ubuntu!${NC}"
     GRUB_TITLE=""
     UBUNTU_CLOUD=1
 }
+
 
 
 # --- Run the appropriate installer ---
