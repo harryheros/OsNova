@@ -352,41 +352,7 @@ chpasswd:
   list: |
     root:${ROOT_PASS}
   expire: false
-bootcmd:
-  - mkdir -p /etc/netplan
-  - |
-    cat > /etc/netplan/99-autolinux.yaml <<NETPLAN
-    network:
-      version: 2
-      renderer: networkd
-      ethernets:
-        ${INTERFACE}:
-          dhcp4: false
-          addresses: [${V_IP}/${V_PREFIX}]
-          routes:
-            - to: default
-              via: ${V_GATEWAY}
-          nameservers:
-            addresses: [8.8.8.8, 1.1.1.1]
-    NETPLAN
-  - rm -f /etc/netplan/50-cloud-init.yaml
-  - netplan apply || true
 write_files:
-  - path: /etc/netplan/99-autolinux.yaml
-    permissions: '0600'
-    content: |
-      network:
-        version: 2
-        renderer: networkd
-        ethernets:
-          ${INTERFACE}:
-            dhcp4: false
-            addresses: [${V_IP}/${V_PREFIX}]
-            routes:
-              - to: default
-                via: ${V_GATEWAY}
-            nameservers:
-              addresses: [8.8.8.8, 1.1.1.1]
   - path: /etc/ssh/sshd_config.d/99-autolinux.conf
     content: |
       PermitRootLogin yes
@@ -400,10 +366,6 @@ write_files:
     content: |
       network: {config: disabled}
 runcmd:
-  - rm -f /etc/netplan/50-cloud-init.yaml
-  - rm -f /etc/netplan/01-netcfg.yaml
-  - netplan generate
-  - netplan apply || true
   - systemctl restart ssh || systemctl restart sshd || true
   - growpart /dev/sda 1 || true
   - resize2fs /dev/sda1 || true
@@ -420,8 +382,35 @@ EOF
         debugfs -w -R "write ${TEMP_CFG}/user-data /var/lib/cloud/seed/nocloud/user-data" "${IMG_ROOT}"
         sync
         echo -e "${GREEN}cloud-init injection complete!${NC}"
+
+        # Write static netplan directly into image via mount
+        ROOT_MNT="/tmp/img_root_mnt"
+        mkdir -p "${ROOT_MNT}"
+        if mount -t ext4 "${IMG_ROOT}" "${ROOT_MNT}" 2>/dev/null; then
+            echo -e "${CYAN}Writing static netplan into image...${NC}"
+            # Overwrite 50-cloud-init.yaml with static IP so DHCP never runs
+            cat > "${ROOT_MNT}/etc/netplan/50-cloud-init.yaml" <<NETPLAN
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    ${INTERFACE}:
+      dhcp4: false
+      addresses: [${V_IP}/${V_PREFIX}]
+      routes:
+        - to: default
+          via: ${V_GATEWAY}
+      nameservers:
+        addresses: [8.8.8.8, 1.1.1.1]
+NETPLAN
+            sync
+            umount "${ROOT_MNT}"
+            echo -e "${GREEN}Static netplan written!${NC}"
+        else
+            echo -e "${YELLOW}Warning: Could not mount root for netplan, will rely on cloud-init.${NC}"
+        fi
     else
-        echo -e "${YELLOW}Warning: Could not find root partition, skipping cloud-init injection.${NC}"
+        echo -e "${YELLOW}Warning: Could not find root partition, skipping injection.${NC}"
     fi
 
     # --- Fix EFI fallback path ---
