@@ -484,7 +484,7 @@ menuentry '${GRUB_TITLE}' {
     if loadfont unicode ; then
         set gfxmode=auto
     fi
-    if [ -e /sys/firmware/efi ] ; then
+    if [ "\$grub_platform" = "efi" ]; then
         linuxefi \$kpath ${KERNEL_APPEND}
         initrdefi \$ipath
     else
