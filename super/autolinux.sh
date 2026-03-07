@@ -351,20 +351,6 @@ chpasswd:
     root:${ROOT_PASS}
   expire: false
 write_files:
-  - path: /etc/netplan/50-cloud-init.yaml
-    permissions: '0600'
-    content: |
-      network:
-        version: 2
-        ethernets:
-          ${INTERFACE}:
-            dhcp4: false
-            addresses: [${V_IP}/${V_PREFIX}]
-            routes:
-              - to: default
-                via: ${V_GATEWAY}
-            nameservers:
-              addresses: [8.8.8.8, 1.1.1.1]
   - path: /etc/netplan/99-autolinux.yaml
     permissions: '0600'
     content: |
@@ -392,7 +378,7 @@ write_files:
     content: |
       network: {config: disabled}
 runcmd:
-  - rm -f /etc/netplan/50-cloud-init.yaml || true
+  - rm -f /etc/netplan/50-cloud-init.yaml
   - netplan apply || true
   - systemctl restart ssh || systemctl restart sshd || true
   - growpart /dev/sda 1 || true
