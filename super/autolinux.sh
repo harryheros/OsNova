@@ -440,7 +440,7 @@ EOF
     # qemu-img convert writes the expanded raw image directly to disk
     # No intermediate file needed — saves disk space
     qemu-img convert -f qcow2 -O raw -p "${IMG_PATH}" "${REAL_DISK}"
-    rm -f "${IMG_PATH}"
+    # Note: /tmp is gone after convert overwrites /dev/sda, no cleanup needed
 
     # Fix GPT backup header (image sized ~3.5GB, disk may be larger)
     echo -e "${CYAN}Fixing GPT backup header...${NC}"
