@@ -492,7 +492,7 @@ sync && sleep 2
 
 if [ "$OS_TYPE" = "debian" ]; then
     # Debian: normal reboot, system is still intact
-    reboot
+    reboot -f
 else
     # Ubuntu: qemu-img convert overwrote /dev/sda, userspace is gone
     # Must use kernel-level reboot
