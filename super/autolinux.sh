@@ -313,28 +313,34 @@ install_ubuntu() {
     echo -e "${CYAN}Downloading Ubuntu cloud image (~650MB)...${NC}"
     wget --continue --show-progress -O "${IMG_PATH}" "${IMG_URL}"
 
-    # --- Map root partition via fdisk offset (no kernel partition scan needed) ---
-    echo -e "${CYAN}Calculating partition offset...${NC}"
-    # Find the Linux filesystem partition start sector and sector size
-    START_SECTOR=$(fdisk -l "${IMG_PATH}" 2>/dev/null | grep "Linux filesystem" | head -n1 | awk '{print $2}')
+    # --- Calculate partition offsets from image ---
+    echo -e "${CYAN}Analysing image partition layout...${NC}"
+    fdisk -l "${IMG_PATH}"
+
     SECTOR_SIZE=$(fdisk -l "${IMG_PATH}" 2>/dev/null | grep "^Units" | awk '{print $(NF-1)}')
-    # Fallback sector size
     [ -z "$SECTOR_SIZE" ] && SECTOR_SIZE=512
-    [ -z "$START_SECTOR" ] && START_SECTOR=2048
-    OFFSET=$(( START_SECTOR * SECTOR_SIZE ))
-    echo -e "${CYAN}Root partition offset: ${OFFSET} bytes (sector ${START_SECTOR} × ${SECTOR_SIZE})${NC}"
 
-    LOOP_IMG=$(losetup --find --show -o "${OFFSET}" "${IMG_PATH}")
-    if [ -z "$LOOP_IMG" ] || [ ! -b "$LOOP_IMG" ]; then
-        echo -e "${RED}Error: Failed to map root partition via offset.${NC}"
-        fdisk -l "${IMG_PATH}" | head -20
-        exit 1
+    # Root partition: largest Linux filesystem
+    PART_INFO=$(fdisk -l "${IMG_PATH}" 2>/dev/null | grep "Linux filesystem" | sort -rnk4 | head -n1)
+    ROOT_START=$(echo "$PART_INFO" | awk '{print $2}')
+    if ! [[ "$ROOT_START" =~ ^[0-9]+$ ]]; then
+        ROOT_START=$(echo "$PART_INFO" | awk '{print $3}')
     fi
-    SRC_PART="${LOOP_IMG}"
-    echo -e "${GREEN}Root partition mapped to: ${SRC_PART}${NC}"
 
-    # --- Inject cloud-init via debugfs ---
-    echo -e "${CYAN}Injecting cloud-init configuration...${NC}"
+    # EFI partition: EFI System type
+    EFI_INFO=$(fdisk -l "${IMG_PATH}" 2>/dev/null | grep "EFI System" | head -n1)
+    EFI_START=$(echo "$EFI_INFO" | awk '{print $2}')
+    if ! [[ "$EFI_START" =~ ^[0-9]+$ ]]; then
+        EFI_START=$(echo "$EFI_INFO" | awk '{print $3}')
+    fi
+
+    ROOT_OFFSET=$(( ROOT_START * SECTOR_SIZE ))
+    EFI_OFFSET=$(( EFI_START * SECTOR_SIZE ))
+
+    echo -e "${CYAN}Root offset : ${ROOT_OFFSET} bytes (sector ${ROOT_START})${NC}"
+    echo -e "${CYAN}EFI  offset : ${EFI_OFFSET} bytes (sector ${EFI_START})${NC}"
+
+    # --- Generate cloud-init config files ---
     TEMP_CFG="/tmp/autolinux_cfg"
     mkdir -p "${TEMP_CFG}"
 
@@ -387,74 +393,61 @@ runcmd:
   - resize2fs /dev/sda1 || true
 EOF
 
-    debugfs -w -R "mkdir /var"                        "${SRC_PART}" 2>/dev/null || true
-    debugfs -w -R "mkdir /var/lib"                    "${SRC_PART}" 2>/dev/null || true
-    debugfs -w -R "mkdir /var/lib/cloud"              "${SRC_PART}" 2>/dev/null || true
-    debugfs -w -R "mkdir /var/lib/cloud/seed"         "${SRC_PART}" 2>/dev/null || true
-    debugfs -w -R "mkdir /var/lib/cloud/seed/nocloud" "${SRC_PART}" 2>/dev/null || true
-    debugfs -w -R "write ${TEMP_CFG}/meta-data /var/lib/cloud/seed/nocloud/meta-data" "${SRC_PART}"
-    debugfs -w -R "write ${TEMP_CFG}/user-data /var/lib/cloud/seed/nocloud/user-data" "${SRC_PART}"
-    sync && sleep 1
-    losetup -d "${LOOP_IMG}" 2>/dev/null || true
+    # --- Step 1: Inject cloud-init into Root partition in image ---
+    echo -e "${CYAN}Injecting cloud-init into root partition...${NC}"
+    LOOP_ROOT=$(losetup --find --show -o "${ROOT_OFFSET}" "${IMG_PATH}")
+    echo -e "${CYAN}Root loop: ${LOOP_ROOT}${NC}"
+
+    debugfs -w -R "mkdir /var"                        "${LOOP_ROOT}" 2>/dev/null || true
+    debugfs -w -R "mkdir /var/lib"                    "${LOOP_ROOT}" 2>/dev/null || true
+    debugfs -w -R "mkdir /var/lib/cloud"              "${LOOP_ROOT}" 2>/dev/null || true
+    debugfs -w -R "mkdir /var/lib/cloud/seed"         "${LOOP_ROOT}" 2>/dev/null || true
+    debugfs -w -R "mkdir /var/lib/cloud/seed/nocloud" "${LOOP_ROOT}" 2>/dev/null || true
+    debugfs -w -R "write ${TEMP_CFG}/meta-data /var/lib/cloud/seed/nocloud/meta-data" "${LOOP_ROOT}"
+    debugfs -w -R "write ${TEMP_CFG}/user-data /var/lib/cloud/seed/nocloud/user-data" "${LOOP_ROOT}"
+    sync
+    losetup -d "${LOOP_ROOT}"
     echo -e "${GREEN}cloud-init injection complete!${NC}"
 
-    # --- dd to disk ---
-    echo -e "${CYAN}Writing image to ${REAL_DISK}...${NC}"
-    dd if="${IMG_PATH}" of="${REAL_DISK}" bs=4M status=progress conv=fsync
-    rm -f "${IMG_PATH}"
-
-    # --- Force kernel to re-read new partition table ---
-    # Must do partx before sgdisk, otherwise kernel still sees old layout
-    partx -u "${REAL_DISK}" 2>/dev/null || true
-    partx -a "${REAL_DISK}" 2>/dev/null || true
-    partprobe "${REAL_DISK}" 2>/dev/null || true
-    sleep 3
-
-    # --- Fix GPT backup header ---
-    echo -e "${CYAN}Repairing GPT and EFI paths...${NC}"
-    sgdisk -e "${REAL_DISK}" 2>/dev/null || true
-    sgdisk -t 15:ef00 "${REAL_DISK}" 2>/dev/null || true
-    partprobe "${REAL_DISK}" 2>/dev/null || true
-    sleep 2
-
-    echo -e "${CYAN}Partitions after refresh:${NC}"
-    lsblk "${REAL_DISK}"
-
-    # --- Fix EFI fallback path ---
-    case "${REAL_DISK}" in
-        *nvme*|*mmcblk*) EFI_DEV="${REAL_DISK}p15" ;;
-        *)                EFI_DEV="${REAL_DISK}15"  ;;
-    esac
-
-    EFI_MNT="/mnt/efi_fix"
+    # --- Step 2: Fix EFI fallback path in image ---
+    echo -e "${CYAN}Fixing EFI fallback path in image...${NC}"
+    EFI_MNT="/tmp/efi_fix_mnt"
     mkdir -p "${EFI_MNT}"
-    if mount "${EFI_DEV}" "${EFI_MNT}" 2>/dev/null; then
+    LOOP_EFI=$(losetup --find --show -o "${EFI_OFFSET}" "${IMG_PATH}")
+    echo -e "${CYAN}EFI loop: ${LOOP_EFI}${NC}"
+
+    if mount -t vfat "${LOOP_EFI}" "${EFI_MNT}" 2>/dev/null; then
         mkdir -p "${EFI_MNT}/EFI/BOOT"
         if [ -f "${EFI_MNT}/EFI/ubuntu/shimx64.efi" ]; then
             cp "${EFI_MNT}/EFI/ubuntu/shimx64.efi" "${EFI_MNT}/EFI/BOOT/BOOTX64.EFI"
             cp "${EFI_MNT}/EFI/ubuntu/grubx64.efi"  "${EFI_MNT}/EFI/BOOT/grubx64.efi" 2>/dev/null || true
-            echo -e "${GREEN}EFI fallback path fixed!${NC}"
+            echo -e "${GREEN}EFI/BOOT/BOOTX64.EFI written into image!${NC}"
         else
             echo -e "${YELLOW}shimx64.efi not found. EFI contents:${NC}"
-            find "${EFI_MNT}" -type f 2>/dev/null || true
+            find "${EFI_MNT}" -type f
         fi
+        sync
         umount "${EFI_MNT}"
     else
-        echo -e "${YELLOW}Warning: Could not mount ${EFI_DEV}. Partitions visible to kernel:${NC}"
-        lsblk "${REAL_DISK}"
+        echo -e "${YELLOW}Warning: Could not mount EFI partition from image.${NC}"
     fi
+    losetup -d "${LOOP_EFI}" 2>/dev/null || true
 
-    # --- Register NVRAM (double insurance) ---
-    if [ -d /sys/firmware/efi ]; then
-        apt-get install -y efibootmgr 2>/dev/null || true
-        efibootmgr -B -L "Ubuntu" 2>/dev/null || true
-        efibootmgr -c -d "${REAL_DISK}" -p 15 -L "Ubuntu" \
-            -l "\\EFI\\ubuntu\\shimx64.efi" 2>/dev/null || true
-    fi
+    # --- Step 3: dd pre-fixed image to disk ---
+    echo -e "${CYAN}Writing pre-fixed image to ${REAL_DISK}...${NC}"
+    dd if="${IMG_PATH}" of="${REAL_DISK}" bs=4M status=progress conv=fsync
+    rm -f "${IMG_PATH}"
+
+    # Fix GPT backup header (image GPT sized for 659MB, disk may be larger)
+    sgdisk -e "${REAL_DISK}" 2>/dev/null || true
+    partprobe "${REAL_DISK}" 2>/dev/null || true
+
+    echo -e "${GREEN}Ubuntu image written and pre-fixed. Ready to reboot!${NC}"
 
     GRUB_TITLE=""
     UBUNTU_CLOUD=1
 }
+
 
 # --- Run the appropriate installer ---
 if [ "$OS_TYPE" = "debian" ]; then
