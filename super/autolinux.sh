@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Project: AutoLinux - Unified Linux Auto-Installer
-# Version: 2.0.0
+# Version: 2.0.1
 # Description: High-performance, BIOS + UEFI compatible automated network
 #              installer for Debian and Ubuntu systems.
 #
@@ -23,7 +23,7 @@ OS_TYPE="debian"
 RELEASE=""
 SSH_PORT="22"
 ROOT_PASS="Harry888"
-VERSION="2.0.0"
+VERSION="2.0.1"
 DEFAULT_PASSWORD_USED=1
 
 # --- Help ---
@@ -104,7 +104,7 @@ IS_CENTOS7=0
 if [ -f /etc/centos-release ] && grep -q "CentOS Linux release 7" /etc/centos-release; then
     IS_CENTOS7=1
     echo -e "${YELLOW}CentOS 7 detected (EOL). Ensuring Vault 7.9.2009 repo is available...${NC}"
-    cat >/etc/yum.repos.d/autolinux-vault-7.9.2009.repo <<'EOF'
+    cat >/etc/yum.repos.d/autolinux-vault-7.9.2009.repo <<'VAULTEOF'
 [autolinux-vault-base]
 name=AutoLinux Vault 7.9.2009 - Base
 baseurl=http://vault.centos.org/7.9.2009/os/$basearch/
@@ -122,7 +122,7 @@ name=AutoLinux Vault 7.9.2009 - Extras
 baseurl=http://vault.centos.org/7.9.2009/extras/$basearch/
 enabled=1
 gpgcheck=0
-EOF
+VAULTEOF
     yum clean all >/dev/null 2>&1 || true
 fi
 
@@ -176,6 +176,11 @@ INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 V_IP=$(ip -4 addr show "$INTERFACE" | grep inet | awk '{print $2}' | cut -d/ -f1)
 V_GATEWAY=$(ip route | grep default | awk '{print $3}' | head -n1)
 V_PREFIX=$(ip -4 addr show "$INTERFACE" | grep inet | awk '{print $2}' | cut -d/ -f2)
+
+# IPv6 detection (optional — not all VPS have IPv6)
+V_IP6=$(ip -6 addr show "$INTERFACE" | grep "inet6" | grep -v "fe80" | awk '{print $2}' | cut -d/ -f1 | head -n1)
+V_PREFIX6=$(ip -6 addr show "$INTERFACE" | grep "inet6" | grep -v "fe80" | awk '{print $2}' | cut -d/ -f2 | head -n1)
+V_GATEWAY6=$(ip -6 route | grep default | awk '{print $3}' | head -n1)
 
 prefix_to_mask() {
     local i mask=""
@@ -235,6 +240,14 @@ printf 'auto lo\niface lo inet loopback\n\n' > /etc/network/interfaces
 for iface in \$(ip -o link show | awk -F': ' '{print \$2}' | grep -v lo); do
     printf "auto \$iface\nallow-hotplug \$iface\niface \$iface inet static\n"
     printf "    address ${V_IP}\n    netmask ${V_NETMASK}\n    gateway ${V_GATEWAY}\n    dns-nameservers 8.8.8.8 1.1.1.1\n\n"
+    if [ -n "${V_IP6}" ] && [ -n "${V_PREFIX6}" ]; then
+        printf "iface \$iface inet6 static\n"
+        printf "    address ${V_IP6}\n    netmask ${V_PREFIX6}\n"
+        if [ -n "${V_GATEWAY6}" ]; then
+            printf "    gateway ${V_GATEWAY6}\n"
+        fi
+        printf "\n"
+    fi
 done >> /etc/network/interfaces
 POSTINSTALL
     chmod +x "${WORKDIR}/post-install.sh"
@@ -375,7 +388,7 @@ EOF
     mkdir -p "${ROOT_MNT}/etc/cloud/cloud.cfg.d"
     echo "network: {config: disabled}" > "${ROOT_MNT}/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg"
 
-    # 6. Cloud-init seed — only growpart/resize, no password/SSH (already done above)
+    # 6. Cloud-init seed — only growpart/resize
     mkdir -p "${ROOT_MNT}/var/lib/cloud/seed/nocloud"
     cat > "${ROOT_MNT}/var/lib/cloud/seed/nocloud/meta-data" <<EOF
 instance-id: i-$(date +%s)
@@ -470,13 +483,14 @@ fi
 # ==============================================================================
 # SUMMARY
 # ==============================================================================
-echo -e "\n${CYAN}◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌${NC}"
+echo -e "\n${CYAN}◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎${NC}"
 echo -e "${GREEN}${BOLD}                 AutoLinux Installation Summary${NC}"
-echo -e "${CYAN}◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌◌${NC}"
+echo -e "${CYAN}◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎◎${NC}"
 echo -e "  OS       : ${YELLOW}${DISPLAY_NAME}${NC}"
 echo -e "  Disk     : ${YELLOW}${REAL_DISK}${NC}"
 echo -e "  IP       : ${YELLOW}${V_IP}/${V_PREFIX}${NC}"
 echo -e "  Gateway  : ${YELLOW}${V_GATEWAY}${NC}"
+[ -n "$V_IP6" ] && echo -e "  IPv6     : ${YELLOW}${V_IP6}/${V_PREFIX6}${NC}"
 echo -e "  SSH Port : ${YELLOW}${SSH_PORT}${NC}"
 if [ "$DEFAULT_PASSWORD_USED" -eq 1 ]; then
     echo -e "  Password : ${RED}Harry888 (default — please change after login!)${NC}"
@@ -491,11 +505,8 @@ echo -e "\n${RED}${BOLD}Rebooting now!${NC}"
 sync && sleep 2
 
 if [ "$OS_TYPE" = "debian" ]; then
-    # Debian: normal reboot, system is still intact
     reboot -f
 else
-    # Ubuntu: qemu-img convert overwrote /dev/sda, userspace is gone
-    # Must use kernel-level reboot
     pkill -TERM sshd 2>/dev/null || true
     sleep 1
     echo 1 > /proc/sys/kernel/sysrq 2>/dev/null || true
@@ -503,4 +514,4 @@ else
     reboot -f -n 2>/dev/null || true
     systemctl reboot --force --force 2>/dev/null || true
     python3 -c "import ctypes; ctypes.CDLL('libc.so.6').reboot(0x1234567)" 2>/dev/null || true
-    fi
+fi
