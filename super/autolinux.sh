@@ -245,7 +245,7 @@ sed -i 's/^Port .*/Port ${SSH_PORT}/g' /etc/ssh/sshd_config
 echo 'net.core.default_qdisc=fq' >> /etc/sysctl.conf
 echo 'net.ipv4.tcp_congestion_control=bbr' >> /etc/sysctl.conf
 printf 'auto lo\niface lo inet loopback\n\n' > /etc/network/interfaces
-printf "auto ${INTERFACE}\nallow-hotplug ${INTERFACE}\niface ${INTERFACE} inet static\n"
+printf "auto ${INTERFACE}\nallow-hotplug ${INTERFACE}\niface ${INTERFACE} inet static\n" >> /etc/network/interfaces
 printf "    address ${V_IP}\n    netmask ${V_NETMASK}\n    gateway ${V_GATEWAY}\n    dns-nameservers 8.8.8.8 1.1.1.1\n\n" >> /etc/network/interfaces
 if [ -n "${V_IP6}" ] && [ -n "${V_PREFIX6}" ]; then
     printf "iface ${INTERFACE} inet6 static\n" >> /etc/network/interfaces
@@ -398,7 +398,6 @@ network:
       routes: ${NETPLAN_ROUTES}
       nameservers: {addresses: [8.8.8.8, 1.1.1.1]}
 EOF
-    chmod 600 "${ROOT_MNT}/etc/netplan/99-static-ip.yaml"
     chmod 600 "${ROOT_MNT}/etc/netplan/99-static-ip.yaml"
 
     # 5. Disable cloud-init network generation
