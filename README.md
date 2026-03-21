@@ -55,31 +55,31 @@ Run as root on the target system.
 You may review the script before execution:
 ```bash
 https://raw.githubusercontent.com/harryheros/LinuxTools/main/os/autolinux.sh
-bash
+```
 ---
 
 Default installation (Debian 12):
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/os/autolinux.sh)
-bash
+```
 ---
 
 Install Debian 13 with custom SSH port and password:
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/os/autolinux.sh) -d 13 -p "YourPassword" --port 2222
-bash
+```
 ---
 
 Install Ubuntu 24.04:
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/os/autolinux.sh) -u 24
-bash
+```
 ---
 
 Install Ubuntu 22.04:
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/os/autolinux.sh) -u 22
-bash
+```
 ---
 
 ⚠ DATA LOSS WARNING
@@ -274,7 +274,7 @@ Show help
 Example usage:
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/os/autolinux.sh) -u 24 -p "SecurePassword" --port 2222
-bash
+```
 ---
 
 # 🔐 Security Model
