@@ -52,33 +52,33 @@ The tool is designed to be transparent, predictable, and suitable for operators 
 
 Run as root on the target system.
 
-You may review the script before execution if desired:
+You may review the script before execution:
 
-https://raw.githubusercontent.com/harryheros/LinuxTools/main/super/autolinux.sh
+https://raw.githubusercontent.com/harryheros/LinuxTools/main/os/autolinux.sh
 
 ---
 
 Default installation (Debian 12):
 
-    curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/super/autolinux.sh | bash
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/os/autolinux.sh)
 
 ---
 
 Install Debian 13 with custom SSH port and password:
 
-    curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/super/autolinux.sh | bash -s -- -d 13 -p "YourPassword" --port 2222
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/os/autolinux.sh) -d 13 -p "YourPassword" --port 2222
 
 ---
 
 Install Ubuntu 24.04:
 
-    curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/super/autolinux.sh | bash -s -- -u 24
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/os/autolinux.sh) -u 24
 
 ---
 
 Install Ubuntu 22.04:
 
-    curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/super/autolinux.sh | bash -s -- -u 22
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/os/autolinux.sh) -u 22
 
 ---
 
@@ -273,7 +273,7 @@ Show help
 
 Example usage:
 
-    curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/super/autolinux.sh | bash -s -- -u 24 -p "SecurePassword" --port 2222
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/os/autolinux.sh) -u 24 -p "SecurePassword" --port 2222
 
 ---
 
