@@ -280,10 +280,10 @@ Install Debian with specified version
 -u [22|24]  
 Install Ubuntu with specified version  
 
--p, --password PASSWORD  
+-p password  
 Set root password  
 
--P, --port PORT  
+--port N  
 Set SSH port  
 
 -h, --help  
@@ -294,7 +294,7 @@ Show help
 ## Example usage
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/os/autolinux.sh) -u 24 -p "SecurePassword" -P 2222
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/LinuxTools/main/os/autolinux.sh) -u 24 -p "SecurePassword" --port 2222
 ```
 
 ---
