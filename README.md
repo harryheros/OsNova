@@ -1,264 +1,159 @@
 # 🚀 AutoLinux v2.0.1 — Unified Linux Provisioning & Reinstall Tool
 
-![Version](https://img.shields.io/badge/version-2.0.1-green.svg)  
-![License](https://img.shields.io/badge/License-GPLv3-blue.svg)  
-![OS Support](https://img.shields.io/badge/OS-Debian%2011%20%7C%2012%20%7C%2013%20%7C%20Ubuntu%2022.04%20%7C%2024.04-red.svg)  
-![Platform](https://img.shields.io/badge/Platform-BIOS%20%7C%20UEFI-orange.svg)  
+![Version](https://img.shields.io/badge/version-2.0.1-green.svg)
+![License](https://img.shields.io/badge/license-GPLv3-blue.svg)
+![OS Support](https://img.shields.io/badge/OS-Debian%2011%20%7C%2012%20%7C%2013%20%7C%20Ubuntu%2022.04%20%7C%2024.04-red.svg)
+![Platform](https://img.shields.io/badge/platform-BIOS%20%7C%20UEFI-orange.svg)
 ![Language](https://img.shields.io/badge/language-bash-black.svg)
 
-AutoLinux is a high-performance Linux provisioning and reinstall tool designed for VPS and bare-metal servers.
+AutoLinux is a high-performance Linux provisioning and reinstall tool for VPS and bare-metal servers.
 
-It provides a deterministic and automated way to reinstall Debian or Ubuntu systems using official upstream resources, without requiring provider rescue environments.
+It provides a deterministic and automated way to reinstall Debian or Ubuntu using official upstream resources — without requiring rescue environments.
 
-> This tool is intended for use on systems owned or managed by the operator.
-
----
-
-# 📑 Table of Contents
-
-Overview  
-Quick Start  
-Key Features  
-Supported Operating Systems  
-Installation Architecture  
-Network Provisioning Model  
-Installation Flow  
-Advanced Parameters  
-Security Model  
-Tested Environments  
-Operational Notes  
-Design Philosophy  
-License  
+> ⚠️ Intended for systems owned or managed by the operator.
 
 ---
 
-# 📘 Overview
+## ⚡ Quick Start
 
-AutoLinux addresses a common infrastructure problem: reliably reprovisioning Linux systems across heterogeneous environments.
-
-Typical use cases include:
-
-• VPS operating system reinstallation  
-• migration to modern Debian or Ubuntu releases  
-• rebuilding servers without rescue images  
-• automated infrastructure recovery  
-• rapid reprovisioning workflows  
-
-The tool is designed to be transparent, predictable, and suitable for operators managing their own infrastructure.
-
----
-
-# ⚡ Quick Start
-
-> Requires bash (process substitution support).  
-Run as root on the target system.
+> Requires bash (process substitution support)  
+> Run as root
 
 ### Review script before execution
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/harryheros/linuxtool/main/os/autolinux.sh
+curl -fsSL https://raw.githubusercontent.com/harryheros/linuxtools/main/os/autolinux.sh
 ```
 
 ---
 
-## Default installation (Debian 12)
+### Default installation (Debian 12)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/linuxtool/main/os/autolinux.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/linuxtools/main/os/autolinux.sh)
 ```
 
 ---
 
-## Install Debian 13 with custom SSH port and password
+### Debian 13 (custom password + SSH port)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/linuxtool/main/os/autolinux.sh) -d 13 -p "YourPassword" --port 2222
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/linuxtools/main/os/autolinux.sh) -d 13 -p "YourPassword" --port 2222
 ```
 
 ---
 
-## Install Ubuntu 24.04
+### Ubuntu 24.04
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/linuxtool/main/os/autolinux.sh) -u 24
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/linuxtools/main/os/autolinux.sh) -u 24
 ```
 
 ---
 
-## Install Ubuntu 22.04
+### Ubuntu 22.04
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/linuxtool/main/os/autolinux.sh) -u 22
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/linuxtools/main/os/autolinux.sh) -u 22
 ```
 
 ---
 
-## Full example
+### Full example
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/linuxtool/main/os/autolinux.sh) -u 24 -p "SecurePassword" --port 2222
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/linuxtools/main/os/autolinux.sh) -u 24 -p "SecurePassword" --port 2222
 ```
 
 ---
 
-⚠ DATA LOSS WARNING
+## ⚠ DATA LOSS WARNING
 
-This tool will completely erase the primary system disk and reinstall the operating system.  
-All existing data will be permanently destroyed.  
+This tool will completely erase the primary disk and reinstall the system.
+
+All existing data will be permanently destroyed.
 
 Use only on systems you own or are authorized to manage.
 
 ---
 
-# ✨ Key Features
+## ✨ Features
 
-Unified Debian and Ubuntu Installer  
-
-AutoLinux supports both Debian and Ubuntu installation workflows through a single interface.  
-
-Debian uses the official network installer, while Ubuntu uses official cloud images for faster deployment.
-
----
-
-BIOS and UEFI Compatibility  
-
-Works across both legacy BIOS and modern UEFI systems.  
-
-Bootloader configuration is handled automatically.
+- Unified Debian and Ubuntu installer
+- Works on BIOS and UEFI systems
+- Cross-distribution execution (Debian, Ubuntu, CentOS, etc.)
+- Uses official upstream sources only
+- Deterministic and predictable deployment model
+- High-speed Ubuntu deployment via cloud images
+- Automated SSH access configuration
+- Built-in network optimization (FQ + BBR)
+- Conditional IPv6 support
 
 ---
 
-Cross-Distribution Execution  
+## 📂 Supported Operating Systems
 
-Can be executed from multiple Linux distributions, including:
+**Target:**
 
-Debian  
-Ubuntu  
-CentOS 7  
-AlmaLinux  
-Rocky Linux  
-Fedora  
+- Debian 13 (Trixie)
+- Debian 12 (Bookworm) — default
+- Debian 11 (Bullseye)
 
----
-
-Official Upstream Sources  
-
-All installation assets are downloaded from official upstream sources:
-
-• Debian infrastructure  
-• Ubuntu cloud image servers  
-
-No modified images or third-party mirrors are used.
+- Ubuntu 24.04 LTS (Noble) — default
+- Ubuntu 22.04 LTS (Jammy)
 
 ---
 
-Deterministic Deployment Model  
+## 🏗 Installation Architecture
 
-AutoLinux prioritizes predictable execution:
+### Debian
 
-• simple disk detection  
-• explicit network configuration  
-• minimal assumptions  
+1. Download netboot installer  
+2. Inject configuration  
+3. Reboot into installer  
 
----
+### Ubuntu
 
-High-Speed Ubuntu Deployment  
-
-Ubuntu installation uses cloud images:
-
-• download official image  
-• modify filesystem offline  
-• write directly to disk  
+1. Download cloud image  
+2. Modify via qemu-nbd  
+3. Write directly to disk  
 
 ---
 
-Automated SSH Access Setup  
+## 🛠 Parameters
 
-AutoLinux configures SSH access during installation to ensure remote accessibility after provisioning.
-
----
-
-Network Optimization  
-
-• FQ queue discipline  
-• TCP BBR congestion control  
-
----
-
-IPv6 Handling  
-
-IPv6 is restored only if valid parameters are detected.  
-
----
-
-# 📂 Supported Operating Systems
-
-Target Systems:
-
-Debian 13 (Trixie)  
-Debian 12 (Bookworm) — Default  
-Debian 11 (Bullseye)  
-
-Ubuntu 24.04 LTS (Noble) — Default  
-Ubuntu 22.04 LTS (Jammy)  
-
----
-
-# 🏗 Installation Architecture
-
-Debian Path:
-
-1. download official netboot installer  
-2. inject automated configuration  
-3. reboot into installer  
-
-Ubuntu Path:
-
-1. download official cloud image  
-2. mount via qemu-nbd  
-3. write to disk  
-
----
-
-# 🛠 Advanced Parameters
-
--d [11|12|13]  
--u [22|24]  
--p password  
---port N  
--h, --help  
-
----
-
-## Example usage
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/linuxtool/main/os/autolinux.sh) -u 24 -p "SecurePassword" --port 2222
+```
+-d [11|12|13]    Debian version
+-u [22|24]       Ubuntu version
+-p password      Root password
+--port N         SSH port
+-h               Help
 ```
 
 ---
 
-# 🔐 Security Model
+## 🔐 Security Model
 
-• no embedded credentials  
-• operator-controlled execution  
-• local system only  
-
----
-
-# 🧪 Tested Environments
-
-KVM  
-cloud VPS  
-BIOS / UEFI  
+- No embedded credentials  
+- Operator-controlled execution  
+- Runs entirely on target system  
 
 ---
 
-# ⚖ License
+## 🧪 Tested Environments
 
-Author: Harry  
+- KVM virtual machines  
+- Cloud VPS providers  
+- BIOS / UEFI systems  
 
-Repository:  
-https://github.com/harryheros/linuxtool  
+---
+
+## ⚖ License
 
 GPLv3
+
+---
+
+## 🔗 Repository
+
+https://github.com/harryheros/linuxtools
