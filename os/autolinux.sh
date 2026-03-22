@@ -6,7 +6,7 @@
 #              installer for Debian and Ubuntu systems.
 #
 # Author: Harry / HarryLinux Tools
-# GitHub: https://github.com/harryheros/LinuxTools
+# GitHub: https://github.com/harryheros/linuxtools
 # Copyright (C) 2026 HarryLinux Tools.
 #
 # License: GNU General Public License v3.0 (GPL-3.0)
