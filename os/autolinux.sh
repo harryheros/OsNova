@@ -99,6 +99,12 @@ while [[ "$#" -gt 0 ]]; do
                 echo -e "${RED}Error: Invalid port number '$2' (1-65535)${NC}"; exit 1
             fi
             ;;
+        --dns)
+            if [ -z "$2" ] || [[ "$2" == -* ]]; then
+                echo -e "${RED}Error: DNS cannot be empty.${NC}"; exit 1
+            fi
+            DNS_SERVERS="$2"; shift 2
+            ;;
         -h|--help)
             show_help; exit 0
             ;;
@@ -294,8 +300,7 @@ Name=e*
 [Network]
 Address=${V_IP}/${V_PREFIX}
 Gateway=${V_GATEWAY}
-DNS=8.8.8.8
-DNS=1.1.1.1
+DNS=${DNS_SERVERS}
 EOF
 
 $(if [ -n "${V_IP6}" ] && [ -n "${V_PREFIX6}" ]; then
@@ -345,7 +350,7 @@ d-i netcfg/disable_autoconfig boolean true
 d-i netcfg/get_ipaddress string ${V_IP}
 d-i netcfg/get_netmask string ${V_NETMASK}
 d-i netcfg/get_gateway string ${V_GATEWAY}
-d-i netcfg/get_nameservers string 8.8.8.8 1.1.1.1
+d-i netcfg/get_nameservers string ${DNS_SERVERS}
 d-i netcfg/confirm_static boolean true
 
 tasksel tasksel/first multiselect standard, ssh-server
@@ -466,7 +471,7 @@ network:
       dhcp6: false
       addresses: ${NETPLAN_ADDRESSES}
       routes: ${NETPLAN_ROUTES}
-      nameservers: {addresses: [8.8.8.8, 1.1.1.1]}
+      nameservers: {addresses: [${DNS_SERVERS// /, }]}
 EOF
     chmod 600 "${ROOT_MNT}/etc/netplan/99-static-ip.yaml"
 
@@ -585,6 +590,7 @@ echo -e "  IP       : ${YELLOW}${V_IP}/${V_PREFIX}${NC}"
 echo -e "  Gateway  : ${YELLOW}${V_GATEWAY}${NC}"
 [ -n "$V_IP6" ] && echo -e "  IPv6     : ${YELLOW}${V_IP6}/${V_PREFIX6}${NC}"
 echo -e "  SSH Port : ${YELLOW}${SSH_PORT}${NC}"
+echo -e "  DNS      : ${YELLOW}${DNS_SERVERS}${NC}"
 
 if [ "$PASSWORD_WAS_GENERATED" -eq 1 ]; then
     echo -e "  Password : ${YELLOW}${ROOT_PASS}${NC} ${RED}(generated automatically — save it now)${NC}"
