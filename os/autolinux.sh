@@ -168,20 +168,20 @@ fi
 
 if command -v apt-get >/dev/null 2>&1; then
     apt-get update -y
-    apt-get install -y util-linux wget ca-certificates kexec-tools tar gzip cpio \
+    apt-get install -y curl util-linux wget ca-certificates kexec-tools tar gzip cpio \
         grub2-common cloud-guest-utils e2fsprogs qemu-utils gdisk
 elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y util-linux wget ca-certificates kexec-tools tar gzip cpio qemu-img gdisk \
+    dnf install -y curl util-linux wget ca-certificates kexec-tools tar gzip cpio qemu-img gdisk \
         grub2 grub2-tools cloud-utils-growpart e2fsprogs
     [ ! -f /usr/sbin/grub-probe ] && [ -f /usr/sbin/grub2-probe ] && \
         ln -sf /usr/sbin/grub2-probe /usr/sbin/grub-probe
 elif command -v yum >/dev/null 2>&1; then
     if [ "$IS_CENTOS7" -eq 1 ]; then
         yum --disablerepo="*" --enablerepo="autolinux-vault-*" install -y \
-            util-linux wget ca-certificates kexec-tools tar gzip cpio \
+            curl util-linux wget ca-certificates kexec-tools tar gzip cpio \
             grub2 grub2-tools cloud-utils-growpart e2fsprogs
     else
-        yum install -y util-linux wget ca-certificates kexec-tools tar gzip cpio \
+        yum install -y curl util-linux wget ca-certificates kexec-tools tar gzip cpio \
             grub2 grub2-tools cloud-utils-growpart e2fsprogs
     fi
     [ ! -f /usr/sbin/grub-probe ] && [ -f /usr/sbin/grub2-probe ] && \
