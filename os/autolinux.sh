@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Project: AutoLinux - Unified Linux Auto-Installer
-# Version: 2.0.5
+# Version: 2.0.6
 # Description: High-performance, BIOS + UEFI compatible automated network
 #              installer for Debian and Ubuntu systems.
 #
@@ -23,7 +23,7 @@ OS_TYPE="debian"
 RELEASE=""
 SSH_PORT="22"
 ROOT_PASS=""
-VERSION="2.0.5"
+VERSION="2.0.6"
 PASSWORD_WAS_GENERATED=0
 DNS_SERVERS="8.8.8.8 1.1.1.1"
 
@@ -276,6 +276,19 @@ install_debian() {
     MIRROR="https://deb.debian.org/debian/dists/${REL_NAME}/main/installer-amd64/current/images/netboot/"
     wget -O "${WORKDIR}/netboot.tar.gz" "${MIRROR}netboot.tar.gz"
 
+    # Determine if /32 prefix requires GatewayOnLink
+    if [ "$V_PREFIX" = "32" ]; then
+        NETWORKD_GATEWAY=""
+        NETWORKD_ROUTE_EXTRA="
+[Route]
+Destination=0.0.0.0/0
+Gateway=${V_GATEWAY}
+GatewayOnLink=yes"
+    else
+        NETWORKD_GATEWAY="Gateway=${V_GATEWAY}"
+        NETWORKD_ROUTE_EXTRA=""
+    fi
+
     cat > "${WORKDIR}/post-install.sh" <<POSTINSTALL
 #!/bin/sh
 set -e
@@ -290,17 +303,19 @@ sed -i 's/^Port .*/Port ${SSH_PORT}/g' /etc/ssh/sshd_config
 echo 'net.core.default_qdisc=fq' >> /etc/sysctl.conf
 echo 'net.ipv4.tcp_congestion_control=bbr' >> /etc/sysctl.conf
 
-# --- Network: use systemd-networkd with wildcard match ---
-# Matches eth0, ens18, enp3s0, etc. regardless of naming scheme
+# --- Network: systemd-networkd with Type=ether ---
+# Matches all physical ethernet NICs regardless of naming scheme
+# (eth0, ens18, enp6s18, etc.) — no net.ifnames hacks needed
 mkdir -p /etc/systemd/network
 cat > /etc/systemd/network/10-static.network <<EOF
 [Match]
-Name=e*
+Type=ether
 
 [Network]
 Address=${V_IP}/${V_PREFIX}
-Gateway=${V_GATEWAY}
-DNS=${DNS_SERVERS}
+${NETWORKD_GATEWAY}
+$(echo "${DNS_SERVERS}" | tr ' ' '\n' | sed 's/^/DNS=/')
+${NETWORKD_ROUTE_EXTRA}
 EOF
 
 $(if [ -n "${V_IP6}" ] && [ -n "${V_PREFIX6}" ]; then
@@ -329,13 +344,6 @@ systemctl disable networking 2>/dev/null || true
 
 # Disable /etc/network/interfaces to avoid conflict
 printf '# Managed by systemd-networkd\n# See /etc/systemd/network/\n' > /etc/network/interfaces
-
-# --- Force legacy NIC naming (eth0) for maximum VPS compatibility ---
-# Covers environments that don't ship net.ifnames=0 by default.
-# The systemd-networkd Name=e* wildcard above acts as fallback
-# in case this parameter is ignored by some hypervisors.
-sed -i 's/GRUB_CMDLINE_LINUX="\(.*\)"/GRUB_CMDLINE_LINUX="\1 net.ifnames=0 biosdevname=0"/' /etc/default/grub
-update-grub
 POSTINSTALL
     chmod +x "${WORKDIR}/post-install.sh"
 
@@ -447,16 +455,24 @@ net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 EOF
 
-    # 4. Static netplan — single wildcard rule covers eth0, ens18, enp3s0, etc.
+    # 4. Static netplan — type: ethernet match covers all physical NICs
     rm -f "${ROOT_MNT}/etc/netplan/"*.yaml
 
-    # Build addresses list (IPv4 always, IPv6 if detected)
+    # Build addresses and routes (handle /32 with on-link)
     if [ -n "$V_IP6" ] && [ -n "$V_PREFIX6" ] && [ -n "$V_GATEWAY6" ]; then
         NETPLAN_ADDRESSES="[${V_IP}/${V_PREFIX}, ${V_IP6}/${V_PREFIX6}]"
-        NETPLAN_ROUTES="[{to: default, via: ${V_GATEWAY}}, {to: \"::/0\", via: \"${V_GATEWAY6}\"}]"
+        if [ "$V_PREFIX" = "32" ]; then
+            NETPLAN_ROUTES="[{to: default, via: ${V_GATEWAY}, on-link: true}, {to: \"::/0\", via: \"${V_GATEWAY6}\"}]"
+        else
+            NETPLAN_ROUTES="[{to: default, via: ${V_GATEWAY}}, {to: \"::/0\", via: \"${V_GATEWAY6}\"}]"
+        fi
     else
         NETPLAN_ADDRESSES="[${V_IP}/${V_PREFIX}]"
-        NETPLAN_ROUTES="[{to: default, via: ${V_GATEWAY}}]"
+        if [ "$V_PREFIX" = "32" ]; then
+            NETPLAN_ROUTES="[{to: default, via: ${V_GATEWAY}, on-link: true}]"
+        else
+            NETPLAN_ROUTES="[{to: default, via: ${V_GATEWAY}}]"
+        fi
     fi
 
     cat > "${ROOT_MNT}/etc/netplan/99-static-ip.yaml" <<EOF
@@ -466,7 +482,7 @@ network:
   ethernets:
     all-interfaces:
       match:
-        name: "e*"
+        type: ethernet
       dhcp4: false
       dhcp6: false
       addresses: ${NETPLAN_ADDRESSES}
