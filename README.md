@@ -28,44 +28,44 @@ Requires Bash and root privileges.
 Review before execution:
 
 ```bash
-curl -fsSL -o reinstall.sh https://raw.githubusercontent.com/harryheros/OsNova/main/os/reinstall.sh
+curl -fsSL -o reinstall.sh https://raw.githubusercontent.com/harryheros/osnova/main/os/reinstall.sh
 less reinstall.sh
 ```
 
 Default installation (Debian 12):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/OsNova/main/os/reinstall.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/osnova/main/os/reinstall.sh)
 ```
 
 Debian 13 with custom password and SSH port:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/OsNova/main/os/reinstall.sh) -d 13 -p "YourPassword" --port 2222
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/osnova/main/os/reinstall.sh) -d 13 -p "YourPassword" --port 2222
 ```
 
 Ubuntu 24.04:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/OsNova/main/os/reinstall.sh) -u 24
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/osnova/main/os/reinstall.sh) -u 24
 ```
 
 Ubuntu 22.04:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/OsNova/main/os/reinstall.sh) -u 22
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/osnova/main/os/reinstall.sh) -u 22
 ```
 
 Custom DNS example:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/OsNova/main/os/reinstall.sh) -u 24 --dns "1.1.1.1 9.9.9.9"
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/osnova/main/os/reinstall.sh) -u 24 --dns "1.1.1.1 9.9.9.9"
 ```
 
 Full example:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/OsNova/main/os/reinstall.sh) -u 24 -p "SecurePassword" --port 2222 --dns "8.8.8.8 1.1.1.1"
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/osnova/main/os/reinstall.sh) -u 24 -p "SecurePassword" --port 2222 --dns "8.8.8.8 1.1.1.1"
 ```
 
 ---
