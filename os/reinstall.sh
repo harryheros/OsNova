@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Project: AutoLinux - Unified Linux Auto-Installer
-# Version: 2.0.6
-# Description: High-performance, BIOS + UEFI compatible automated network
-#              installer for Debian and Ubuntu systems.
+# Project: OsNova - System Deployment & Reinstallation Engine
+# Version: 1.0.0
+# Description: BIOS + UEFI compatible automated network installer
+#              for Debian and Ubuntu systems on VPS and bare-metal servers.
 #
-# Author: Harry / HarryLinux Tools
-# GitHub: https://github.com/harryheros/linuxtools
-# Copyright (C) 2026 HarryLinux Tools.
+# Author: Harry
+# GitHub: https://github.com/harryheros/OsNova
+# Copyright (C) 2026 Harry
 #
 # License: GNU General Public License v3.0 (GPL-3.0)
 # ==============================================================================
@@ -23,7 +23,7 @@ OS_TYPE="debian"
 RELEASE=""
 SSH_PORT="22"
 ROOT_PASS=""
-VERSION="2.0.6"
+VERSION="1.0.0"
 PASSWORD_WAS_GENERATED=0
 DNS_SERVERS="8.8.8.8 1.1.1.1"
 
@@ -33,29 +33,29 @@ generate_random_password() {
 
 # --- Help ---
 show_help() {
-    echo -e "${CYAN}AutoLinux v${VERSION} - Unified Linux Auto-Installer${NC}"
+    echo -e "${CYAN}OsNova v${VERSION} - System Deployment & Reinstallation Engine${NC}"
     echo ""
     echo -e "${BOLD}Usage:${NC}"
-    echo -e "  bash autolinux.sh [options]"
+    echo -e "  bash reinstall.sh [options]"
     echo ""
     echo -e "${BOLD}Options:${NC}"
-    echo -e "  ${YELLOW}-d [11|12|13]${NC}       Install Debian (default: 12)"
-    echo -e "  ${YELLOW}-u [22|24]${NC}          Install Ubuntu (default: 24)"
-    echo -e "  ${YELLOW}-p password${NC}         Set root password (optional)"
-    echo -e "  ${YELLOW}-port / --port N${NC}    Set SSH port (default: 22)"
-    echo -e "  ${YELLOW}--dns \"IP1 IP2\"${NC}     Set DNS servers (default: 8.8.8.8 1.1.1.1)"
-    echo -e "  ${YELLOW}-h / --help${NC}         Show this help"
+    echo -e "  ${YELLOW}-d [11|12|13]${NC}           Install Debian (default: 12)"
+    echo -e "  ${YELLOW}-u [22|24]${NC}              Install Ubuntu (default: 24)"
+    echo -e "  ${YELLOW}-p PASSWORD${NC}             Set root password (optional)"
+    echo -e "  ${YELLOW}-port PORT, --port PORT${NC} Set SSH port (default: 22)"
+    echo -e "  ${YELLOW}--dns \"IP1 IP2\"${NC}         Set DNS servers (default: 8.8.8.8 1.1.1.1)"
+    echo -e "  ${YELLOW}-h, --help${NC}              Show this help"
     echo ""
     echo -e "${BOLD}Notes:${NC}"
     echo -e "  • If ${YELLOW}-p${NC} is not provided, a random root password will be generated."
     echo -e "  • The generated password will be shown before reboot."
     echo ""
     echo -e "${BOLD}Examples:${NC}"
-    echo -e "  bash autolinux.sh"
-    echo -e "  bash autolinux.sh -d 13"
-    echo -e "  bash autolinux.sh -u"
-    echo -e "  bash autolinux.sh -u 22"
-    echo -e "  bash autolinux.sh -u 24 -p mypass --port 2222"
+    echo -e "  bash reinstall.sh"
+    echo -e "  bash reinstall.sh -d 13"
+    echo -e "  bash reinstall.sh -u"
+    echo -e "  bash reinstall.sh -u 22"
+    echo -e "  bash reinstall.sh -u 24 -p mypass --port 2222"
 }
 
 # --- Argument Parsing ---
@@ -103,7 +103,8 @@ while [[ "$#" -gt 0 ]]; do
             if [ -z "$2" ] || [[ "$2" == -* ]]; then
                 echo -e "${RED}Error: DNS cannot be empty.${NC}"; exit 1
             fi
-            DNS_SERVERS="$2"; shift 2
+            DNS_SERVERS="$(echo "$2" | tr ',' ' ')"
+            shift 2
             ;;
         -h|--help)
             show_help; exit 0
@@ -125,9 +126,19 @@ if [ -z "$ROOT_PASS" ]; then
 fi
 
 clear
+echo -e "${CYAN}"
+cat << "ASCIIEOF"
+   ____  _____ _   __                 
+  / __ \/ ___// | / /___ _   ______ _ 
+ / / / /\__ \/  |/ / __ \ | / / __ `/ 
+/ /_/ /___/ / /|  / /_/ / |/ / /_/ /  
+\____//____/_/ |_/\____/|___/\__,_/   
+ >> System Deployment & Reinstallation Engine <<
+ASCIIEOF
+echo -e "${NC}"
 echo -e "${CYAN}❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊${NC}"
-echo -e "${GREEN}${BOLD}            AutoLinux Unified Installer v${VERSION}${NC}"
-echo -e "${GREEN}        Copyright (C) 2026 HarryLinux Tools / Harry${NC}"
+echo -e "${GREEN}${BOLD}               OsNova Deployment Engine v${VERSION}${NC}"
+echo -e "${GREEN}                     Copyright (C) 2026 Harry${NC}"
 echo -e "${CYAN}❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊${NC}"
 
 if [ "$PASSWORD_WAS_GENERATED" -eq 1 ]; then
@@ -144,21 +155,21 @@ IS_CENTOS7=0
 if [ -f /etc/centos-release ] && grep -q "CentOS Linux release 7" /etc/centos-release; then
     IS_CENTOS7=1
     echo -e "${YELLOW}CentOS 7 detected (EOL). Ensuring Vault 7.9.2009 repo is available...${NC}"
-    cat >/etc/yum.repos.d/autolinux-vault-7.9.2009.repo <<'VAULTEOF'
-[autolinux-vault-base]
-name=AutoLinux Vault 7.9.2009 - Base
+    cat >/etc/yum.repos.d/osnova-vault-7.9.2009.repo <<'VAULTEOF'
+[osnova-vault-base]
+name=OsNova Vault 7.9.2009 - Base
 baseurl=http://vault.centos.org/7.9.2009/os/$basearch/
 enabled=1
 gpgcheck=0
 
-[autolinux-vault-updates]
-name=AutoLinux Vault 7.9.2009 - Updates
+[osnova-vault-updates]
+name=OsNova Vault 7.9.2009 - Updates
 baseurl=http://vault.centos.org/7.9.2009/updates/$basearch/
 enabled=1
 gpgcheck=0
 
-[autolinux-vault-extras]
-name=AutoLinux Vault 7.9.2009 - Extras
+[osnova-vault-extras]
+name=OsNova Vault 7.9.2009 - Extras
 baseurl=http://vault.centos.org/7.9.2009/extras/$basearch/
 enabled=1
 gpgcheck=0
@@ -177,7 +188,7 @@ elif command -v dnf >/dev/null 2>&1; then
         ln -sf /usr/sbin/grub2-probe /usr/sbin/grub-probe
 elif command -v yum >/dev/null 2>&1; then
     if [ "$IS_CENTOS7" -eq 1 ]; then
-        yum --disablerepo="*" --enablerepo="autolinux-vault-*" install -y \
+        yum --disablerepo="*" --enablerepo="osnova-vault-*" install -y \
             curl util-linux wget ca-certificates kexec-tools tar gzip cpio \
             grub2 grub2-tools cloud-utils-growpart e2fsprogs
     else
@@ -264,7 +275,7 @@ echo -e "      Target OS : ${YELLOW}${DISPLAY_NAME}${NC}"
 echo -e "      Root Disk : ${YELLOW}${REAL_DISK}${NC}"
 echo -e "      IP Config : ${YELLOW}${V_IP} / ${V_NETMASK}${NC}"
 
-WORKDIR="/var/tmp/autolinux"
+WORKDIR="/var/tmp/osnova"
 rm -rf "$WORKDIR" && mkdir -p "$WORKDIR"
 
 # ==============================================================================
@@ -396,15 +407,15 @@ EOF
     cp "${WORKDIR}/preseed.cfg" ./preseed.cfg
     cp "${WORKDIR}/post-install.sh" ./post-install.sh
 
-    rm -f /boot/vmlinuz-*autolinux /boot/initrd-*autolinux.gz 2>/dev/null
-    find . | cpio -H newc -o 2>/dev/null | gzip -1 > /boot/initrd-debian${RELEASE}-autolinux.gz
-    cp "${WORKDIR}/debian-installer/amd64/linux" /boot/vmlinuz-debian${RELEASE}-autolinux
+    rm -f /boot/vmlinuz-*osnova /boot/initrd-*osnova.gz 2>/dev/null
+    find . | cpio -H newc -o 2>/dev/null | gzip -1 > /boot/initrd-debian${RELEASE}-osnova.gz
+    cp "${WORKDIR}/debian-installer/amd64/linux" /boot/vmlinuz-debian${RELEASE}-osnova
 
-    KERNEL_PATH="/boot/vmlinuz-debian${RELEASE}-autolinux"
-    INITRD_PATH="/boot/initrd-debian${RELEASE}-autolinux.gz"
+    KERNEL_PATH="/boot/vmlinuz-debian${RELEASE}-osnova"
+    INITRD_PATH="/boot/initrd-debian${RELEASE}-osnova.gz"
     NET_APPEND="netcfg/disable_autoconfig=true netcfg/get_ipaddress=${V_IP} netcfg/get_netmask=${V_NETMASK} netcfg/get_gateway=${V_GATEWAY} netcfg/get_nameservers=\"${DNS_SERVERS}\" netcfg/confirm_static=true"
     KERNEL_APPEND="auto=true priority=critical file=/preseed.cfg locale=en_US.UTF-8 keymap=us hostname=debian ${NET_APPEND} vga=788 --- quiet"
-    GRUB_TITLE="AutoLinux-Debian${RELEASE}"
+    GRUB_TITLE="OsNova-Debian${RELEASE}"
     UBUNTU_CLOUD=0
 }
 
@@ -447,14 +458,14 @@ install_ubuntu() {
     sed -i "s/^#\?Port .*/Port ${SSH_PORT}/" "${ROOT_MNT}/etc/ssh/sshd_config"
     mkdir -p "${ROOT_MNT}/etc/ssh/sshd_config.d"
     rm -f "${ROOT_MNT}/etc/ssh/sshd_config.d/"*
-    cat > "${ROOT_MNT}/etc/ssh/sshd_config.d/99-autolinux.conf" <<EOF
+    cat > "${ROOT_MNT}/etc/ssh/sshd_config.d/99-osnova.conf" <<EOF
 PermitRootLogin yes
 PasswordAuthentication yes
 Port ${SSH_PORT}
 EOF
 
     # 3. BBR
-    cat > "${ROOT_MNT}/etc/sysctl.d/99-autolinux-bbr.conf" <<EOF
+    cat > "${ROOT_MNT}/etc/sysctl.d/99-osnova-bbr.conf" <<EOF
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 EOF
@@ -602,7 +613,7 @@ fi
 # SUMMARY
 # ==============================================================================
 echo -e "\n${CYAN}❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊${NC}"
-echo -e "${GREEN}${BOLD}                 AutoLinux Installation Summary${NC}"
+echo -e "${GREEN}${BOLD}                   OsNova Deployment Summary${NC}"
 echo -e "${CYAN}❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊❊${NC}"
 echo -e "  OS       : ${YELLOW}${DISPLAY_NAME}${NC}"
 echo -e "  Disk     : ${YELLOW}${REAL_DISK}${NC}"
