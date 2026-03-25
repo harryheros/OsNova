@@ -72,11 +72,11 @@ bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/OsNova/main/os/re
 
 ## Data Loss Warning
 
-This tool will completely erase the primary disk and reinstall the operating system.
-
-All existing data on the target disk will be permanently destroyed.
-
-Do not run it on any machine unless you fully understand the consequences.
+> ⚠️ This tool will completely erase the primary disk and reinstall the operating system.
+>
+> All existing data on the target disk will be permanently destroyed.
+>
+> Do not run it unless you fully understand the consequences.
 
 ---
 
@@ -138,12 +138,12 @@ Ubuntu path:
 
 ## Parameters
 
-- d [11|12|13]       Install Debian (default: 12)  
-- u [22|24]          Install Ubuntu (default: 24)  
-- p password         Set root password  
-- port N             Set SSH port (default: 22)  
-- dns "IP1 IP2"      Set DNS servers  
-- h, help            Show help  
+-d [11|12|13]   Install Debian (default: 12)  
+-u [22|24]      Install Ubuntu (default: 24)  
+-p PASSWORD     Set root password  
+--port PORT     Set SSH port (default: 22)  
+--dns "IP..."   Set DNS servers  
+-h, --help      Show help  
 
 ---
 
