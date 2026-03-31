@@ -3,7 +3,9 @@
 > System Deployment & Reinstallation Engine for VPS and bare-metal servers.
 
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](./LICENSE)
+[![Version](https://img.shields.io/badge/version-2.0.0-brightgreen.svg)](#)
 [![Platform](https://img.shields.io/badge/platform-VPS%20%7C%20Bare--metal-black.svg)](#)
+[![Arch](https://img.shields.io/badge/arch-x86__64-lightgrey.svg)](#)
 [![OS Support](https://img.shields.io/badge/support-Debian%2011%2F12%2F13%20%7C%20Ubuntu%2022.04%2F24.04-green.svg)](#)
 [![Language](https://img.shields.io/badge/language-Bash-informational.svg)](#)
 
@@ -23,7 +25,7 @@ Use only on systems you own or are explicitly authorized to manage.
 
 ## Quick Start
 
-Requires Bash and root privileges.
+Requires Bash, root privileges, and an x86_64 system.
 
 Review before execution:
 
@@ -62,10 +64,16 @@ Custom DNS example:
 bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/osnova/main/os/reinstall.sh) -u 24 --dns "1.1.1.1 9.9.9.9"
 ```
 
+Skip confirmation prompt (for automation):
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/osnova/main/os/reinstall.sh) -u 24 -p "SecurePassword" --port 2222 --force
+```
+
 Full example:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/osnova/main/os/reinstall.sh) -u 24 -p "SecurePassword" --port 2222 --dns "8.8.8.8 1.1.1.1"
+bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/osnova/main/os/reinstall.sh) -u 24 -p "SecurePassword" --port 2222 --dns "8.8.8.8 1.1.1.1" --force
 ```
 
 ---
@@ -77,6 +85,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/osnova/main/os/re
 > All existing data on the target disk will be permanently destroyed.
 >
 > Do not run it unless you fully understand the consequences.
+>
+> Starting from v2.0.0, OsNova requires explicit confirmation before proceeding. Use `--force` to skip this prompt in automated workflows.
 
 ---
 
@@ -91,15 +101,21 @@ bash <(curl -fsSL https://raw.githubusercontent.com/harryheros/osnova/main/os/re
 - Automatic disk and network detection  
 - Static IPv4 migration from the current system  
 - Optional IPv6 carry-over when detected  
+- IPv4 /32 and IPv6 /128 on-link route handling  
 - Debian networking configured with systemd-networkd  
 - Ubuntu networking configured with netplan rendered by systemd-networkd  
 - Custom DNS server support via --dns  
 - Automatic SSH root login configuration  
-- Custom SSH port support  
+- Custom SSH port support with reliable fallback injection  
 - Automatic random root password generation when -p is not provided  
+- Password validation to prevent shell-unsafe characters  
 - Built-in FQ and BBR network optimization  
+- Ubuntu cloud image integrity verification  
 - Ubuntu EFI fallback boot path repair  
 - CentOS 7 Vault fallback for legacy dependency installation  
+- Interactive confirmation prompt before disk erasure  
+- Root privilege and architecture pre-checks  
+- Idempotent GRUB configuration  
 
 ---
 
@@ -119,36 +135,56 @@ Ubuntu:
 ## Installation Architecture
 
 Debian path:  
-1. Detect current disk and network configuration  
-2. Download official Debian netboot installer  
-3. Inject preseed configuration and post-install script into initrd  
-4. Create a temporary GRUB boot entry  
-5. Reboot into the automated Debian installer  
+1. Pre-check root privilege and x86_64 architecture  
+2. Detect current disk and network configuration  
+3. Confirm with operator before proceeding  
+4. Download official Debian netboot installer  
+5. Inject preseed configuration and post-install script into initrd  
+6. Create a temporary GRUB boot entry  
+7. Reboot into the automated Debian installer  
 
 Ubuntu path:  
-1. Detect current disk and network configuration  
-2. Download official Ubuntu cloud image  
-3. Mount the image through qemu-nbd  
-4. Configure root password, SSH, sysctl, netplan, cloud-init seed, and DNS  
-5. Repair EFI fallback boot path if needed  
-6. Write the image directly to the target disk  
-7. Reboot into the new system  
+1. Pre-check root privilege and x86_64 architecture  
+2. Detect current disk and network configuration  
+3. Confirm with operator before proceeding  
+4. Download official Ubuntu cloud image and verify integrity  
+5. Mount the image through qemu-nbd  
+6. Configure root password, SSH, sysctl, netplan, cloud-init seed, and DNS  
+7. Repair EFI fallback boot path if needed  
+8. Write the image directly to the target disk  
+9. Reboot into the new system  
 
 ---
 
 ## Parameters
 
--d [11|12|13]   Install Debian (default: 12)  
--u [22|24]      Install Ubuntu (default: 24)  
--p PASSWORD     Set root password  
---port PORT     Set SSH port (default: 22)  
---dns "IP..."   Set DNS servers  
--h, --help      Show help  
+| Parameter | Description |
+|---|---|
+| `-d [11\|12\|13]` | Install Debian (default: 12) |
+| `-u [22\|24]` | Install Ubuntu (default: 24) |
+| `-p PASSWORD` | Set root password |
+| `-port PORT`, `--port PORT` | Set SSH port (default: 22) |
+| `--dns "IP1 IP2"` | Set DNS servers (default: 8.8.8.8 1.1.1.1) |
+| `-f`, `--force` | Skip confirmation prompt |
+| `-v`, `--version` | Show version info |
+| `-h`, `--help` | Show help |
+
+---
+
+## Password Rules
+
+If `-p` is not provided, a 20-character random password is generated automatically.
+
+Allowed characters: `A-Z a-z 0-9 ! @ # % ^ * _ + = . -`
+
+Characters that could interfere with shell expansion or preseed parsing are rejected:  
+`` $ ` " ' \ spaces ( ) { } | & ; < > ~ ``
 
 ---
 
 ## Default Behavior
 
+- A confirmation prompt is displayed before any destructive action (skip with `--force`)  
 - If -p is not provided, a random root password is generated automatically  
 - The generated password is displayed before reboot and must be saved by the operator  
 - SSH is configured to allow root login and password authentication  
@@ -162,10 +198,10 @@ Ubuntu path:
 ## Network Configuration
 
 Debian:  
-OsNova installs a static systemd-networkd configuration using the detected IPv4 settings, optional IPv6 settings, and the selected DNS servers.  
+OsNova installs a static systemd-networkd configuration using the detected IPv4 settings, optional IPv6 settings, and the selected DNS servers. IPv4 /32 and IPv6 /128 prefixes are handled with GatewayOnLink routing.
 
 Ubuntu:  
-OsNova installs a static netplan configuration rendered by systemd-networkd, disables cloud-init network generation, and writes the selected DNS servers into the installed system.  
+OsNova installs a static netplan configuration rendered by systemd-networkd, disables cloud-init network generation, and writes the selected DNS servers into the installed system. IPv4 /32 and IPv6 /128 prefixes are handled with on-link routing.
 
 ---
 
@@ -189,6 +225,31 @@ OsNova is intended for:
 - Deterministic Debian and Ubuntu reinstall operations  
 
 It is not designed as a rescue panel replacement or a consumer desktop installer.  
+
+---
+
+## Changelog
+
+### v2.0.0
+
+- Added root privilege and x86_64 architecture pre-checks  
+- Added interactive confirmation prompt before disk erasure (`--force` to skip)  
+- Added `--version` / `-v` parameter  
+- Added password validation to reject shell-unsafe characters  
+- Upgraded random password generation to 20 characters with symbols  
+- Fixed preseed password injection to prevent shell expansion issues  
+- Fixed SSH port configuration to reliably write Port even when missing from sshd_config  
+- Fixed GRUB_DISABLE_OS_PROBER repeated append (now idempotent)  
+- Fixed disk detection fallback to exclude loop, nbd, ram, and zram devices  
+- Added Ubuntu cloud image integrity verification via qemu-img check  
+- Added IPv6 /128 on-link route support for both Debian and Ubuntu paths  
+- Improved cleanup trap to cover HUP/PIPE signals and temporary work directory  
+- Debian BBR configuration moved to dedicated sysctl.d file  
+- Debian SSH configuration now uses sshd_config.d override for reliability  
+
+### v1.0.0
+
+- Initial release  
 
 ---
 
